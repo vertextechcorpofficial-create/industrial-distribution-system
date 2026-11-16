@@ -31,12 +31,12 @@ import {
     CartesianGrid,
     type TooltipProps,
 } from 'recharts';
-import { BarChart3, PieChart as PieIcon, ShieldAlert, Award } from 'lucide-react';
+import { BarChart3, PieChart as PieIcon } from 'lucide-react';
 import { SupplierSummaryRow, ReportExecutiveKPIs } from '../types';
 
 interface SupplierPerformanceChartsProps {
     suppliers: SupplierSummaryRow[];
-    kpis: ReportExecutiveKPIs | null;
+    kpis?: ReportExecutiveKPIs | null;
     isLoading?: boolean;
 }
 
@@ -99,7 +99,6 @@ function CustomPieTooltip({ active, payload }: TooltipProps<number, string>) {
 
 export const SupplierPerformanceCharts: React.FC<SupplierPerformanceChartsProps> = ({
     suppliers,
-    kpis,
     isLoading = false,
 }) => {
     // Top 6 active suppliers by order volume
