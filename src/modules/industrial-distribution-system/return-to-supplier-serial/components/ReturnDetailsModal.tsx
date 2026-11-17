@@ -146,7 +146,7 @@ export function ReturnDetailsModal({
     if (isOpen && currentSupplierId && currentBranchId) {
       const timer = setTimeout(() => {
         loadInventory(currentBranchId, currentSupplierId);
-      }, 150);
+      }, 300);
       return () => clearTimeout(timer);
     }
   }, [isOpen, currentSupplierId, currentBranchId, loadInventory]);

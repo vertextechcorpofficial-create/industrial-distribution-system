@@ -182,39 +182,97 @@ export async function getRawProductsByIds(productIds: number[]) {
   );
 }
 
+// AG-COMMENT: Server-side cache and promise deduplication for Spring Boot branch inventory.
+// Since Spring Boot's view-running-inventory-by-unit endpoint queries by branchId (and not supplierId),
+// caching at the branch level prevents re-querying Spring Boot when users switch suppliers within the same branch.
+interface CachedBranchInventory {
+  data: InventoryViewRow[];
+  timestamp: number;
+}
+const serverBranchCache = new Map<number, CachedBranchInventory>();
+const serverBranchInFlight = new Map<number, Promise<InventoryViewRow[]>>();
+const BRANCH_CACHE_TTL_MS = 3 * 60 * 1000; // 3 minutes fresh cache
+const BRANCH_STALE_TTL_MS = 15 * 60 * 1000; // 15 minutes stale cache for 429 rate limit resilience
+
 /**
- * Fetches inventory from the Spring Boot VOS API.
- * This is kept in the repository as it is an external infrastructure call.
+ * Fetches inventory from the Spring Boot VOS API with server-side caching, in-flight deduplication,
+ * and 429 rate limit backoff + stale cache resilience.
  */
 export async function getSpringInventory(branchId: number, supplierId: number, token: string): Promise<InventoryViewRow[]> {
-  // AG-COMMENT: Strip inline comments and whitespace from Spring URL
-  const SPRING_URL = (process.env.SPRING_API_BASE_URL || "").split("#")[0].trim();
-  if (!SPRING_URL) throw new Error("SPRING_API_BASE_URL is not defined");
-
-  const effectiveToken = (token || process.env.VOS_ACCESS_TOKEN || process.env.vos_access_token || "").split("#")[0].trim();
-
-  // AG-COMMENT: Scoped date range with branchId and divisionId to ensure fast response & small payload.
-  // Previously, branchId was not included in targetUrl, forcing Spring Boot to return 111+ MB of
-  // company-wide data which triggered ECONNRESET or 400 Bad Request / 500 Internal Server Error.
-  const startDate = "2020-01-01";
-  const endDate = "2099-12-31";
-  const targetUrl = `${SPRING_URL.replace(/\/$/, "")}/api/view-running-inventory-by-unit/all?startDate=${startDate}&endDate=${endDate}&branchId=${branchId}&divisionId=1`;
-
-  const springRes = await fetch(targetUrl, {
-    method: "GET",
-    headers: {
-      "Content-Type": "application/json",
-      Authorization: `Bearer ${effectiveToken}`,
-    },
-    cache: "no-store",
-  });
-
-  if (!springRes.ok) {
-    const text = await springRes.text().catch(() => `HTTP ${springRes.status}`);
-    throw new Error(`Spring Boot inventory fetch failed (${springRes.status}): ${text}`);
+  // AG-COMMENT: 1. Check in-memory fresh cache
+  const cached = serverBranchCache.get(branchId);
+  if (cached && Date.now() - cached.timestamp < BRANCH_CACHE_TTL_MS) {
+    return cached.data;
   }
 
-  return springRes.json();
+  // AG-COMMENT: 2. In-flight promise deduplication to prevent concurrent duplicate calls for the same branch
+  const inFlight = serverBranchInFlight.get(branchId);
+  if (inFlight) {
+    return inFlight;
+  }
+
+  const fetchPromise = (async () => {
+    const SPRING_URL = (process.env.SPRING_API_BASE_URL || "").split("#")[0].trim();
+    if (!SPRING_URL) throw new Error("SPRING_API_BASE_URL is not defined");
+
+    const effectiveToken = (token || process.env.VOS_ACCESS_TOKEN || process.env.vos_access_token || "").split("#")[0].trim();
+
+    const startDate = "2020-01-01";
+    const endDate = "2099-12-31";
+    const targetUrl = `${SPRING_URL.replace(/\/$/, "")}/api/view-running-inventory-by-unit/all?startDate=${startDate}&endDate=${endDate}&branchId=${branchId}&divisionId=1`;
+
+    const executeFetch = async () => {
+      return fetch(targetUrl, {
+        method: "GET",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${effectiveToken}`,
+        },
+        cache: "no-store",
+      });
+    };
+
+    let springRes = await executeFetch();
+
+    // AG-COMMENT: 3. Handle 429 Too Many Requests with retry or stale-while-revalidate fallback
+    if (springRes.status === 429) {
+      console.warn(`[RTS Repository] Spring Boot returned 429 Too Many Requests for branch ${branchId}. Checking stale cache...`);
+      // Check if we have stale data within the 15-minute window
+      if (cached && Date.now() - cached.timestamp < BRANCH_STALE_TTL_MS) {
+        console.warn(`[RTS Repository] Serving stale inventory for branch ${branchId} to bypass 429 rate limit.`);
+        return cached.data;
+      }
+
+      // No stale data available: wait 1.5s backoff and retry once
+      await new Promise((resolve) => setTimeout(resolve, 1500));
+      springRes = await executeFetch();
+
+      if (springRes.status === 429) {
+        // If still 429 and any cached data exists regardless of age, use it
+        if (cached) {
+          console.warn(`[RTS Repository] Serving emergency cached inventory for branch ${branchId}.`);
+          return cached.data;
+        }
+        throw new Error("The inventory service is receiving too many requests. Please wait a moment and try again.");
+      }
+    }
+
+    if (!springRes.ok) {
+      const text = await springRes.text().catch(() => `HTTP ${springRes.status}`);
+      throw new Error(`Spring Boot inventory fetch failed (${springRes.status}): ${text}`);
+    }
+
+    const data = (await springRes.json()) as InventoryViewRow[];
+    serverBranchCache.set(branchId, { data, timestamp: Date.now() });
+    return data;
+  })();
+
+  serverBranchInFlight.set(branchId, fetchPromise);
+  try {
+    return await fetchPromise;
+  } finally {
+    serverBranchInFlight.delete(branchId);
+  }
 }
 
 /**

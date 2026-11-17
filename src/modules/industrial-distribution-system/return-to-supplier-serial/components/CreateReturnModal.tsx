@@ -295,7 +295,7 @@ export function CreateReturnModal({
     if (selection.supplierId && selection.branchId) {
       const timer = setTimeout(() => {
         loadInventory(Number(selection.branchId), Number(selection.supplierId));
-      }, 150);
+      }, 300);
       return () => clearTimeout(timer);
     }
   }, [selection.supplierId, selection.branchId, loadInventory]);
