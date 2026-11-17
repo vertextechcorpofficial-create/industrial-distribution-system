@@ -27,7 +27,7 @@ import {
     SelectValue,
 } from "@/components/ui/select";
 import type { Branch } from "../types";
-import { PAGE_SIZE_OPTIONS } from "../types";
+ 
 
 interface BranchTableProps {
     branches: Branch[];

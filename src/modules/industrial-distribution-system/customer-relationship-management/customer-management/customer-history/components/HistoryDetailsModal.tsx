@@ -13,7 +13,7 @@ import { Button } from "@/components/ui/button";
 import { StatusBadge } from "@/components/ui/status-badge";
 import { formatCurrency } from "@/lib/utils";
 import { CustomerHistoryRecord } from "../types";
-
+import Image from "next/image";
 interface HistoryDetailsModalProps {
     open: boolean;
     onOpenChange: (open: boolean) => void;
@@ -65,13 +65,16 @@ function CustomerAvatar({ imageId, name }: { imageId?: string | null; name: stri
 
     if (imageId && !imageFailed) {
         return (
-            <img
+            <Image
                 src={`${process.env.NEXT_PUBLIC_API_BASE_URL}/assets/${imageId}`}
                 alt=""
+                width={48}
+                height={48}
                 onError={() => setImageFailed(true)}
                 className="h-12 w-12 shrink-0 rounded-lg border border-border/60 object-cover"
             />
         );
+        
     }
 
     return (
