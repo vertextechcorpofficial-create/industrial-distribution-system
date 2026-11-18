@@ -11,9 +11,12 @@
 import * as React from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import {
+  ArrowDownLeft,
+  ArrowUpRight,
   ClipboardList,
   FileClock,
   Ruler,
+  Scale,
   X,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
@@ -48,27 +51,68 @@ function Metric({
   );
 }
 
-/** One ledger document. `muted` marks movement that Expected deliberately ignores. */
+/**
+ * One ledger document card in the Supporting Records drawer.
+ * Layout places the document identifier & timestamp on the left, and anchors
+ * the document type (top-right) directly above prominent, color-coded quantity
+ * badges (bottom-right) so quantities are scannable at a glance rather than
+ * cramped inline beside the timestamp.
+ * `muted` marks movement booked after the count cutoff (outside Expected).
+ */
 function DocumentRow({ doc, muted }: { doc: SupportingDocument; muted?: boolean }) {
+  const hasQuantities = Boolean(doc.inBase || doc.outBase || doc.countAdjustment);
+
   return (
     <li
       className={cn(
-        "rounded-lg border px-2.5 py-2",
+        "rounded-lg border px-3 py-2.5 transition-colors",
         muted ? "border-dashed bg-background" : "bg-muted/20"
       )}
     >
-      <div className="flex items-center justify-between gap-2">
-        <span className="truncate text-[11px] font-medium">{doc.label}</span>
-        <span className="shrink-0 text-[10px] text-muted-foreground">{doc.docType}</span>
-      </div>
-      <div className="mt-1 flex items-center gap-3 text-[10px] tabular-nums text-muted-foreground">
-        <span className="flex items-center gap-1">
-          <FileClock className="h-3 w-3" />
-          {formatPhDateTime(doc.ts)}
+      {/* Top row: Document reference (left) & Document type label (right) */}
+      <div className="flex items-start justify-between gap-3">
+        <span className="truncate text-xs font-semibold text-foreground">{doc.label}</span>
+        <span className="shrink-0 text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
+          {doc.docType}
         </span>
-        {doc.inBase ? <span className="text-emerald-600">in {formatQty(doc.inBase)}</span> : null}
-        {doc.outBase ? <span className="text-orange-600">out {formatQty(doc.outBase)}</span> : null}
-        {doc.countAdjustment ? <span>restated {formatSigned(doc.countAdjustment)}</span> : null}
+      </div>
+
+      {/* Bottom row: Timestamp cleanly isolated (left) & prominent quantity badges (right) */}
+      <div className="mt-2 flex flex-wrap items-center justify-between gap-2">
+        <span className="flex items-center gap-1.5 text-[11px] tabular-nums text-muted-foreground">
+          <FileClock className="h-3.5 w-3.5 shrink-0" />
+          <span>{formatPhDateTime(doc.ts)}</span>
+        </span>
+
+        {hasQuantities ? (
+          <div
+            className={cn(
+              "flex shrink-0 flex-wrap items-center justify-end gap-1.5",
+              muted && "opacity-80"
+            )}
+          >
+            {doc.inBase ? (
+              <span className="inline-flex items-center gap-1 rounded-md border border-emerald-500/30 bg-emerald-500/10 px-2 py-0.5 text-xs font-semibold tabular-nums text-emerald-700 dark:border-emerald-500/35 dark:bg-emerald-500/15 dark:text-emerald-300">
+                <ArrowDownLeft className="h-3 w-3 shrink-0" />
+                <span>In {formatQty(doc.inBase)}</span>
+              </span>
+            ) : null}
+
+            {doc.outBase ? (
+              <span className="inline-flex items-center gap-1 rounded-md border border-orange-500/30 bg-orange-500/10 px-2 py-0.5 text-xs font-semibold tabular-nums text-orange-700 dark:border-orange-500/35 dark:bg-orange-500/15 dark:text-orange-300">
+                <ArrowUpRight className="h-3 w-3 shrink-0" />
+                <span>Out {formatQty(doc.outBase)}</span>
+              </span>
+            ) : null}
+
+            {doc.countAdjustment ? (
+              <span className="inline-flex items-center gap-1 rounded-md border border-sky-500/30 bg-sky-500/10 px-2 py-0.5 text-xs font-semibold tabular-nums text-sky-700 dark:border-sky-500/35 dark:bg-sky-500/15 dark:text-sky-300">
+                <Scale className="h-3 w-3 shrink-0" />
+                <span>Restated {formatSigned(doc.countAdjustment)}</span>
+              </span>
+            ) : null}
+          </div>
+        ) : null}
       </div>
     </li>
   );
@@ -221,7 +265,7 @@ export function StockMovementVarianceDrawer() {
               ) : (
                 <>
                   {selectedRow.supportingDocuments.length > 0 && (
-                    <ul className="space-y-1.5">
+                    <ul className="space-y-2">
                       {selectedRow.supportingDocuments.map((doc, index) => (
                         <DocumentRow key={`${doc.docNo}-${index}`} doc={doc} />
                       ))}
@@ -232,14 +276,14 @@ export function StockMovementVarianceDrawer() {
                       than left out, so the line does not read as having received
                       nothing. It stays outside Expected and the variance. */}
                   {selectedRow.documentsAfterCount.length > 0 && (
-                    <div className="mt-3">
+                    <div className="mt-4">
                       <p className="mb-1 text-[11px] font-semibold text-muted-foreground">
                         After the count ({selectedRow.documentsAfterCount.length})
                       </p>
                       <p className="mb-2 text-[11px] text-muted-foreground">
                         Booked after this count, so it is real stock but outside Expected.
                       </p>
-                      <ul className="space-y-1.5">
+                      <ul className="space-y-2">
                         {selectedRow.documentsAfterCount.map((doc, index) => (
                           <DocumentRow key={`${doc.docNo}-${index}`} doc={doc} muted />
                         ))}
