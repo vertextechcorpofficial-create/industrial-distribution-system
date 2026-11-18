@@ -1,53 +1,107 @@
+// src/modules/industrial-distribution-system/customer-relationship-management/customer-reports/customer-order-and-consumption-report/types/customer-order-consumption.types.ts
 // ============================================================
-// customer-order-consumption.types.ts
-// Pure TypeScript interfaces for the Customer Order & Consumption Report.
-// Validation lives in customer-order-consumption.schema.ts — no Zod here.
-// Placement: CRM -> Customer Reports -> Customer Order & Consumption Report
+// TypeScript interfaces for Customer Order & Consumption Report.
+// Follows IDS guidelines:
+// - Main group is Customer with nested Product breakdown
+// - Products display products.description as product name
+// - Products filtered by is_serialized = 1
+// - Branches filtered by division_id = 1
+// - Categories filtered by is_industrial = 1 (extracts cylinder size: 1.4kg, 11kg, 50kg)
+// - Read-only analytical audit: no writes to DB, no inventory moves, no financial releases
 // ============================================================
 
-// ------------------------------------------------------------
-// Channel — the single dimension that keeps incompatible units apart.
-// CYLINDER demand is a PURCHASE PROXY (pieces x cylinder size) for
-// serialized products in industrial categories.
-// LPG demand is ACTUAL RECORDED CONSUMPTION (native kg).
-// They are never summed into one number (ticket s8).
-// ------------------------------------------------------------
 export type ConsumptionChannel = "CYLINDER" | "LPG";
 
-// lpg_customer_lpg_sites.billing_mode — carried as a label only.
-// It is a SITE attribute, so filtering on it would fan out order counts.
 export type BillingMode = "KILO" | "METERED" | "BOTH";
 
 // ------------------------------------------------------------
-// Filter inputs sent to the BFF as query params.
-// Each picker is a multi-select, so a value is a list; an absent or empty
-// list means "everything", never "nothing". The BFF receives them as repeated
-// query params and Directus matches them with `_in`.
+// Filter inputs
 // ------------------------------------------------------------
 export interface CustomerOrderConsumptionFilters {
-  startDate: string; // YYYY-MM-DD, Asia/Manila
-  endDate: string; // YYYY-MM-DD, doubles as the reporting cutoff
-  customerCodes?: string[]; // customer.customer_code
-  branchIds?: number[]; // branches.id, matched on sales_invoice.branch_id
-  salesmanIds?: number[]; // salesman.id
-  classificationIds?: number[]; // customer.classification -> customer_classification.id
+  startDate: string; // YYYY-MM-DD
+  endDate: string; // YYYY-MM-DD
+  customerCodes?: string[];
+  branchIds?: number[];
+  salesmanIds?: number[];
+  classificationIds?: number[];
+  categoryIds?: number[];
   channel?: ConsumptionChannel;
+  search?: string;
 }
 
-// Applied filters carry display labels so the UI can render active chips.
-// They are positionally parallel to the id lists above and never used in a
-// query, so a caller may read them for text only.
 export interface AppliedFilterContext extends CustomerOrderConsumptionFilters {
   customerLabels?: string[];
   branchLabels?: string[];
   salesmanLabels?: string[];
   classificationLabels?: string[];
+  categoryLabels?: string[];
 }
 
 // ------------------------------------------------------------
-// Raw Directus rows. snake_case is deliberate: these mirror the
-// collection payloads 1:1 so the repo layer stays logic-free.
+// Raw Directus rows mirroring DB collections
 // ------------------------------------------------------------
+export interface RawBranchRow {
+  id: number;
+  branch_name: string;
+  branch_code: string;
+  division_id: number | null;
+  isActive: number;
+}
+
+export interface RawCategoryRow {
+  category_id: number;
+  category_name: string;
+  is_industrial: number;
+}
+
+export interface RawProductRow {
+  product_id: number;
+  parent_id?: number | null; // Null for parent products; populated for variants (EMPTY, SWAP, etc.)
+  uom_ids?: string | null;
+  product_code: string | null;
+  product_name: string | null;
+  description?: string | null; // Used as product name per ids-guide
+  product_weight: number | null;
+  weight: number | null;
+  weight_unit_id: number | null;
+  is_serialized?: unknown; // Filtered by is_serialized = 1
+  product_category: number | null;
+  density_factor?: number | null;
+}
+
+export interface RawCustomerRow {
+  id?: number;
+  customer_id?: number;
+  customer_code: string;
+  customer_name: string;
+  store_name: string | null;
+  classification: number | null;
+  branch_id?: number | null;
+}
+
+export interface RawClassificationRow {
+  id: number;
+  classification_name: string;
+}
+
+export interface RawSalesmanRow {
+  id: number;
+  salesman_code: string;
+  salesman_name: string;
+}
+
+export interface RawUnitRow {
+  unit_id: number;
+  unit_name: string;
+  unit_shortcut: string | null;
+}
+
+export interface RawWeightUnitRow {
+  id: number;
+  code: string;
+  name: string;
+}
+
 export interface RawInvoiceRow {
   invoice_id: number;
   order_id: string | null;
@@ -66,7 +120,7 @@ export interface RawInvoiceRow {
 
 export interface RawInvoiceDetailRow {
   detail_id: number;
-  invoice_no: number; // holds sales_invoice.invoice_id despite the name
+  invoice_no: number; // holds sales_invoice.invoice_id
   product_id: number;
   unit: number | null;
   quantity: number;
@@ -85,7 +139,7 @@ export interface RawReturnRow {
   return_date: string | null;
   gross_amount: number | null;
   order_id: string | null;
-  invoice_no: string | null; // doc number, not the FK id
+  invoice_no: string | null;
   status: string | null;
   isPosted?: unknown;
   deleted_at: string | null;
@@ -98,14 +152,9 @@ export interface RawReturnDetailRow {
   quantity: number;
   total_amount: number | null;
   gross_amount: number | null;
-  // sales_return_details carries its own line status, so a single cancelled
-  // line can be dropped without discarding the whole return.
   status: string | null;
 }
 
-// sales_invoice_sales_return: return_no -> sales_return.return_id,
-// invoice_no -> sales_invoice.invoice_id. The column names do not match
-// what they hold, which is why the mapping is written down here.
 export interface RawReturnLinkRow {
   id: number;
   return_no: number;
@@ -113,188 +162,216 @@ export interface RawReturnLinkRow {
   amount: number | null;
 }
 
-export interface RawProductRow {
+export interface RawPostDispatchRow {
+  id: number;
+  sales_invoice_id: number;
+  dispatch_number: string | null;
+  dispatch_date: string | null;
+  status: string | null;
+}
+
+export interface RawPostDispatchSerialRow {
+  id: number;
+  sales_invoice_id: number;
+  serial_number: string;
+  product_id?: number | null;
+  created_at?: string | null;
+}
+
+export interface RawSalesOrderRow {
+  order_id: number | string;
+  order_no: string | null;
+  customer_code: string | null;
+  branch_id: number | null;
+  order_date: string | null;
+  delivery_date?: string | null;
+  order_status: string | null;
+  total_amount?: number | null;
+  net_amount?: number | null;
+  isCancelled?: number | boolean | string | null;
+  remarks?: string | null;
+}
+
+export interface RawSalesOrderDetailRow {
+  detail_id: number;
+  order_id: number | string;
   product_id: number;
-  product_code: string | null;
-  product_name: string | null;
-  // AG-COMMENT: Added description field to support ids-guide rule: shows products.description as product name
-  description?: string | null;
-  product_weight: number | null;
-  weight: number | null;
-  weight_unit_id: number | null;
-  is_serialized?: unknown;
-  product_category: number | null;
+  ordered_quantity?: number | null;
+  allocated_quantity?: number | null;
+  served_quantity?: number | null;
+  quantity?: number | null;
+  unit_price?: number | null;
+  gross_amount?: number | null;
+  net_amount?: number | null;
 }
 
-export interface RawUnitRow {
-  unit_id: number;
-  unit_name: string | null;
-  unit_shortcut: string | null;
-}
-
-export interface RawWeightUnitRow {
+export interface RawSalesOrderSerialRow {
   id: number;
-  code: string | null;
-  name: string | null;
+  sales_order_id: string;
+  serial_number: string;
+  delivery_date: string | null;
+  customer_code: string | null;
+  branch_id: number | null;
+  product_id: number | null;
 }
 
-export interface RawCategoryRow {
-  category_id: number;
-  category_name: string | null;
-  // Eligibility flag: only industrial categories are in scope for the
-  // cylinder channel, alongside products.is_serialized.
-  is_industrial?: unknown;
-}
-
-export interface RawCustomerRow {
-  customer_code: string;
-  customer_name: string | null;
-  store_name: string | null;
-  classification: number | null;
-}
-
-export interface RawClassificationRow {
+export interface RawSalesReturnSerialRow {
   id: number;
-  classification_name: string | null;
+  sales_return_detail_id: number;
+  serial_number: string;
+  created_at: string | null;
 }
 
-export interface RawBranchRow {
+export interface RawUnfulfilledTransactionRow {
   id: number;
-  branch_name: string | null;
-  branch_code: string | null;
+  sales_invoice_id: number | null;
+  order_id: string | null;
+  customer_code: string | null;
+  transaction_date: string | null;
+  status: string | null;
+  remarks: string | null;
 }
 
-export interface RawSalesmanRow {
+export interface RawUnfulfilledDetailRow {
   id: number;
-  salesman_code: string | null;
-  salesman_name: string | null;
+  unfulfilled_sales_transaction_id: number;
+  sales_invoice_detail_id: number | null;
+  product_id?: number | null;
+  quantity: number;
+  total_amount: number | null;
+  concern_type?: string | null;
 }
 
-// ---- LPG actual-consumption sources ----
 export interface RawLpgSiteRow {
   id: number;
-  customer_code: string | null;
-  site_name: string | null;
-  billing_mode: BillingMode | string | null;
+  customer_code: string;
+  site_name: string;
+  billing_mode: BillingMode;
+  default_price_per_kg: number | null;
+  is_active: number;
 }
 
+export type LpgBillableSource = "NONE" | "METERED" | "WIWO";
+export type LpgTransactionType = "ONBOARDING_BASELINE" | "REGULAR_BILLING" | "ADJUSTMENT";
+
+/**
+ * Exact projection of vos_database.lpg_metered_wiwo_transactions.
+ * Uses billable_source ('METERED' | 'WIWO') to classify Metered vs WIWO (Kg) consumption.
+ */
 export interface RawUnifiedLpgRow {
   id: number;
-  transaction_no: string | null;
-  transaction_type: string | null;
+  transaction_header_id?: number | null;
+  transaction_no: string;
+  transaction_type?: LpgTransactionType | string | null;
   lpg_site_id: number;
-  customer_code: string | null;
-  sales_order_id: number | null;
-  sales_order_no: string | null;
-  meter_reading_id: number | null;
-  wiwo_header_id: number | null;
-  transaction_date: string | null;
-  billing_period_from: string | null;
-  billing_period_to: string | null;
+  customer_code: string;
+  sales_order_id?: number | null;
+  sales_order_no?: string | null;
+  meter_reading_id?: number | null;
+  wiwo_header_id?: number | null;
+  transaction_date: string;
+  billing_period_from?: string | null;
+  billing_period_to?: string | null;
   metered_kg: number | null;
   wiwo_kg: number | null;
   variance_kg: number | null;
-  variance_reason_code: string | null;
-  billable_source: string | null;
-  billable_kg: number | null;
-  price_per_kg: number | null;
-  gross_amount: number | null;
-  discount_amount: number | null;
-  net_amount: number | null;
+  variance_reason_code?: string | null;
+  billable_source: LpgBillableSource | string | null;
+  billable_kg: number;
+  price_per_kg: number;
+  gross_amount?: number | null;
+  net_amount: number;
   sales_invoice_id: number | null;
   sales_invoice_no: string | null;
-  // AG-COMMENT: Added transaction_header_id to link child transactions back to authoritative consolidation headers
-  transaction_header_id?: number | null;
-  status: string | null;
+  status: string;
+}
+
+export interface RawWiwoHeaderRow {
+  id: number;
+  wiwo_no: string;
+  lpg_site_id: number;
+  customer_code: string;
+  transaction_date: string;
+  wiwo_type: string;
+  total_billable_kg: number;
+  gross_amount: number;
+  net_amount: number;
+  wiwo_status: string;
+  sales_invoice_id: number | null;
+  sales_invoice_no: string | null;
 }
 
 export interface RawWiwoDetailRow {
   id: number;
   wiwo_header_id: number;
   lpg_site_id: number;
-  customer_code: string | null;
-  line_type: string | null;
-  product_id: number | null;
+  customer_code: string;
+  line_type: string;
+  product_id: number;
   serial_number: string | null;
   tare_weight_kg: number | null;
   consumed_lpg_kg: number | null;
-  billable_kg: number | null;
+  billable_kg: number;
   price_per_kg: number | null;
   gross_amount: number | null;
   net_amount: number | null;
-  is_billable?: unknown;
-}
-
-export interface RawWiwoHeaderRow {
-  id: number;
-  wiwo_no: string | null;
-  lpg_site_id: number;
-  customer_code: string | null;
-  transaction_date: string | null;
-  wiwo_type: string | null;
-  total_billable_kg: number | null;
-  net_amount: number | null;
-  wiwo_status: string | null;
-  sales_invoice_id: number | null;
-  sales_invoice_no: string | null;
+  is_billable: number;
 }
 
 export interface RawMeterReadingRow {
   id: number;
   lpg_site_id: number;
-  customer_code: string | null;
-  reading_no: string | null;
-  reading_date: string | null;
+  customer_code: string;
+  reading_no: string;
+  reading_date: string;
   billing_period_from: string | null;
   billing_period_to: string | null;
+  previous_reading?: number | null;
+  current_reading?: number | null;
+  raw_consumption?: number | null;
   meter_unit: string | null;
-  kg_consumed: number | null;
+  kg_consumed: number;
   price_per_kg: number | null;
   gross_amount: number | null;
   net_amount: number | null;
-  reading_status: string | null;
+  reading_status: string;
   sales_invoice_id: number | null;
   sales_invoice_no: string | null;
 }
 
-
-// AG-COMMENT: Added RawLpgTransactionHeaderRow to represent consolidation headers (lpg_transaction_headers)
 export interface RawLpgTransactionHeaderRow {
   header_id: number;
-  header_no: string | null;
-  customer_id: string | null;
-  customer_site_id: number | null;
-  period_from: string | null;
-  period_to: string | null;
-  status: string | null;
-  is_billed?: unknown;
+  header_no: string;
+  customer_id: number;
+  customer_site_id: number;
+  period_from: string;
+  period_to: string;
+  status: string;
+  is_billed: number;
 }
 
-// AG-COMMENT: Added RawLpgHeaderInvoiceRow to link consolidation headers to sales_invoices (lpg_transaction_header_invoices)
 export interface RawLpgHeaderInvoiceRow {
   id: number;
   header_id: number;
   sales_invoice_id: number;
-  status?: string | null;
-}
-
-export interface RawPostDispatchRow {
-  invoice_id: number | null;
   status: string | null;
 }
 
-// Everything the server-side aggregation needs, as already-fetched rows.
 export interface ConsumptionSourceData {
   invoices: RawInvoiceRow[];
   invoiceDetails: RawInvoiceDetailRow[];
   returns: RawReturnRow[];
   returnDetails: RawReturnDetailRow[];
   returnLinks: RawReturnLinkRow[];
+  postDispatch: RawPostDispatchRow[];
+  postDispatchSerials: RawPostDispatchSerialRow[];
+  salesOrders: RawSalesOrderRow[];
+  salesOrderDetails: RawSalesOrderDetailRow[];
+  salesOrderSerials: RawSalesOrderSerialRow[];
+  salesReturnSerials: RawSalesReturnSerialRow[];
+  unfulfilledTransactions: RawUnfulfilledTransactionRow[];
+  unfulfilledDetails: RawUnfulfilledDetailRow[];
   products: RawProductRow[];
-  // Master rows for the non-serialized products this window references. The
-  // `products` read is scoped to is_serialized = 1, so these exist only so
-  // LPG and non-cylinder lines keep their names and sizes — never to widen
-  // the cylinder scope, which still evaluates is_serialized per row.
   productLabels: RawProductRow[];
   units: RawUnitRow[];
   weightUnits: RawWeightUnitRow[];
@@ -308,21 +385,16 @@ export interface ConsumptionSourceData {
   wiwoHeaders: RawWiwoHeaderRow[];
   wiwoDetails: RawWiwoDetailRow[];
   meterReadings: RawMeterReadingRow[];
-  postDispatch: RawPostDispatchRow[];
-  // AG-COMMENT: Added transactionHeaders and headerInvoices to support consolidation header links
   transactionHeaders: RawLpgTransactionHeaderRow[];
   headerInvoices: RawLpgHeaderInvoiceRow[];
 }
 
 // ------------------------------------------------------------
-// Monthly trend — one point per YYYY-MM bucket
+// Aggregation Data Structures (Customer Main Group, Nested Product)
 // ------------------------------------------------------------
 export interface MonthlyTrendPoint {
-  yearMonth: string; // "YYYY-MM"
+  yearMonth: string; // YYYY-MM
   orderCount: number;
-  // The document keys behind orderCount. Kept so a report-level rollup can
-  // dedupe an order that appears in several product rows; without them the
-  // buying-frequency metric would inflate with the number of lines sold.
   orderKeys: string[];
   grossQty: number;
   returnedQty: number;
@@ -331,96 +403,152 @@ export interface MonthlyTrendPoint {
   netKg: number;
 }
 
-// Report-level trend keeps the channel on every point, because a blended kg
-// series would plot a proxy against a measurement as if they were one thing.
-export interface ReportTrendPoint extends MonthlyTrendPoint {
+/** Product-level breakdown for a customer */
+export interface ProductConsumptionSummary {
+  productId: number;
+  productCode: string;
+  productName: string; // From products.description
+  categoryName: string;
+  cylinderSizeKg: number | null; // Parsed from categories.category_name (is_industrial=1)
+  gasType: string | null;
   channel: ConsumptionChannel;
+  orderFrequency: number;
+  fulfilledQty: number;
+  returnedQty: number;
+  netQty: number;
+  grossKg: number;
+  returnedKg: number;
+  netKg: number;
+  avgOrderSizeKg: number;
+  avgOrderSizeQty: number;
+  netAmount: number;
+  monthlyTrend: MonthlyTrendPoint[];
+  exceptionCodes: string[];
 }
 
-// ------------------------------------------------------------
-// Result row grain: customer x branch x channel x product.
-// Branch comes from sales_invoice.branch_id — the only branch evidence
-// that exists for both sales and LPG postings (no LPG table carries a
-// branch column, and there is no user-to-branch table in the schema).
-// ------------------------------------------------------------
+/** Customer-level main group row */
 export interface CustomerOrderConsumptionRow {
+  rowKey: string; // customerCode|branchId
   customerCode: string;
   customerName: string;
   storeName: string;
   classificationName: string;
   branchId: number | null;
   branchName: string;
-  channel: ConsumptionChannel;
-  billingMode: BillingMode | null; // LPG rows only
-  // AG-COMMENT: Added siteId and siteName to prevent multi-site row collision in LPG reporting
-  siteId?: number | null;
-  siteName?: string | null;
-  productId: number;
-  productCode: string;
-  productName: string;
-  // Provisional gas dimension: products has no gas_type column, so the
-  // product category name is used and callers must treat null as unknown.
-  gasType: string | null;
-  // Cylinder size proxy. Read from the product category name ("LPG 11KG"),
-  // because the categories table has no numeric size column and serialized
-  // cylinder products commonly store 0 in product_weight. The product weight
-  // is the fallback; cylinder_assets.tare_weight is the EMPTY weight and is
-  // deliberately not used here.
-  sizeKg: number | null;
-  quantityUnit: string;
-
-  orderCount: number;
-  grossQty: number;
+  orderFrequency: number;
+  fulfilledQty: number;
   returnedQty: number;
   netQty: number;
-
-  // kg is a proxy on CYLINDER rows (qty x cylinder size) and a measured
-  // value on LPG rows. kgIsProxy tells the UI which label to render.
   grossKg: number;
   returnedKg: number;
   netKg: number;
-  kgIsProxy: boolean;
-
-  netAmount: number;
   avgOrderSizeKg: number;
   avgOrderSizeQty: number;
-
-  // Metered vs weigh-in/weigh-out divergence, LPG rows only.
-  meteredKg: number;
-  wiwoKg: number;
-  varianceKg: number;
-
+  netAmount: number;
+  products: ProductConsumptionSummary[];
   monthlyTrend: MonthlyTrendPoint[];
   exceptionCodes: string[];
 }
 
 // ------------------------------------------------------------
-// Data exceptions — surfaced, never corrected here (ticket s6).
+// Supporting Documents Drill-down
+// ------------------------------------------------------------
+export type SupportingDocumentType =
+  | "SALES_ORDER"
+  | "SALES_INVOICE"
+  | "POST_DISPATCH"
+  | "SALES_RETURN"
+  | "LPG_WIWO"
+  | "METER_READING"
+  | "UNFULFILLED_BACKLOG";
+
+/**
+ * Structured LPG reconciliation breakdown for Metered and WIWO (Kg) documents
+ * surfaced in the Supporting Records Audit drawer.
+ */
+export interface SupportingLpgDetails {
+  billableSource: "METERED" | "WIWO";
+  transactionType?: string | null;
+  siteName?: string | null;
+  billingPeriodFrom?: string | null;
+  billingPeriodTo?: string | null;
+  meterReadingNo?: string | null;
+  previousReading?: number | null;
+  currentReading?: number | null;
+  rawConsumption?: number | null;
+  meterUnit?: string | null;
+  meteredKg?: number | null;
+  wiwoNo?: string | null;
+  wiwoKg?: number | null;
+  varianceKg?: number | null;
+  varianceReason?: string | null;
+  billableKg: number;
+  pricePerKg?: number | null;
+}
+
+export interface SupportingDocument {
+  id: string;
+  documentType: SupportingDocumentType;
+  documentNo: string;
+  date: string;
+  status: string;
+  customerCode: string;
+  customerName: string;
+  branchName: string;
+  productId: number;
+  productName: string;
+  productCode: string;
+  quantity: number;
+  kg: number;
+  amount: number;
+  serialNumbers: string[];
+  reference: string;
+  // Relational keys for grouping linked Sales Orders -> Invoices -> Returns -> LPG in the drill-down drawer
+  orderNo?: string | null;
+  invoiceNo?: string | null;
+  returnNo?: string | null;
+  lpgDetails?: SupportingLpgDetails | null;
+  notes?: string;
+}
+
+export interface CustomerOrderConsumptionDetail {
+  customerCode: string;
+  customerName: string;
+  storeName: string;
+  classificationName: string;
+  branchName: string;
+  productId?: number | null;
+  productName?: string | null;
+  window: { startDate: string; endDate: string };
+  documents: SupportingDocument[];
+  exceptions: ReportException[];
+}
+
+// ------------------------------------------------------------
+// Exceptions and Quality Flags
 // ------------------------------------------------------------
 export type ExceptionCode =
   | "MISSING_PRODUCT_WEIGHT"
   | "MISSING_PRODUCT_CATEGORY"
-  | "NON_KG_WEIGHT_UNIT"
+  | "UNFULFILLED_DELIVERY"
+  | "RETURN_EXCEEDS_FULFILLED"
   | "UNBILLED_LPG_TRANSACTION"
-  | "BRANCH_UNKNOWN"
   | "LPG_VARIANCE"
-  | "LPG_BASELINE_EXCLUDED"
-  | "NOT_FULFILLED_DELIVERY"
-  | "FULFILLED_WITH_CONCERNS";
+  | "BRANCH_UNKNOWN";
 
 export interface ReportException {
   code: ExceptionCode;
   channel: ConsumptionChannel;
   customerCode: string;
   customerName: string;
-  // LPG_TRANSACTION covers lpg_metered_wiwo_transactions rows, which are
-  // neither a WIWO header nor a meter reading once the unified ledger wins.
+  productName?: string;
   referenceType:
+    | "SALES_ORDER"
     | "SALES_INVOICE"
     | "SALES_RETURN"
     | "WIWO"
     | "METER_READING"
-    | "LPG_TRANSACTION"
+    | "UNFULFILLED"
     | "PRODUCT";
   referenceNo: string;
   detail: string;
@@ -429,9 +557,7 @@ export interface ReportException {
 }
 
 // ------------------------------------------------------------
-// KPI overview. kg is reported per channel, never as one combined figure:
-// CYLINDER kg is a purchase proxy and LPG kg is measured consumption, so a
-// single total would break the incompatible-units rule (ticket s8).
+// Executive KPIs & Overview
 // ------------------------------------------------------------
 export interface ChannelTotals {
   customers: number;
@@ -454,48 +580,32 @@ export interface CustomerOrderConsumptionOverview {
   exceptionCount: number;
 }
 
+export interface ReportTrendPoint {
+  yearMonth: string;
+  channel: ConsumptionChannel;
+  orderCount: number;
+  orderKeys: string[];
+  grossQty: number;
+  returnedQty: number;
+  grossKg: number;
+  returnedKg: number;
+  netKg: number;
+}
+
 // ------------------------------------------------------------
-// BFF response envelope
+// BFF Envelope
 // ------------------------------------------------------------
 export interface CustomerOrderConsumptionReportResponse {
   filters: AppliedFilterContext;
-  generatedAt: string; // ISO timestamp
-  reportingCutoff: string; // YYYY-MM-DD, mirrors endDate
-  sourceRowCount: number; // raw rows read before aggregation
+  generatedAt: string;
+  reportingCutoff: string;
+  sourceRowCount: number;
   overview: CustomerOrderConsumptionOverview;
   rows: CustomerOrderConsumptionRow[];
   exceptions: ReportException[];
   monthlyTrend: ReportTrendPoint[];
 }
 
-// ------------------------------------------------------------
-// Drill-down: the supporting documents behind one customer row group.
-// ------------------------------------------------------------
-export interface SupportingDocument {
-  documentType: "SALES_ORDER" | "SALES_INVOICE" | "DISPATCH" | "SALES_RETURN" | "WIWO" | "METER_READING" | "LPG_BILLING";
-  documentNo: string;
-  date: string;
-  status: string;
-  quantity: number;
-  kg: number;
-  amount: number;
-  reference: string;
-}
-
-export interface CustomerOrderConsumptionDetail {
-  customerCode: string;
-  customerName: string;
-  storeName: string;
-  classificationName: string;
-  branchName: string;
-  window: { startDate: string; endDate: string };
-  documents: SupportingDocument[];
-  exceptions: ReportException[];
-}
-
-// ------------------------------------------------------------
-// Filter-bar lookup options
-// ------------------------------------------------------------
 export interface ReportLookupOption {
   value: string;
   label: string;

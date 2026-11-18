@@ -1,241 +1,215 @@
+// src/modules/industrial-distribution-system/customer-relationship-management/customer-reports/customer-order-and-consumption-report/providers/CustomerOrderConsumptionReportProvider.tsx
+// ============================================================
+// React Context Provider for the Customer Order & Consumption Report.
+// Strictly obeys React hook ordering: all hooks execute unconditionally
+// before any early returns.
+// ============================================================
+
 "use client";
 
-// ============================================================
-// CustomerOrderConsumptionReportProvider.tsx
-// Owns the report state: draft vs applied filters, the abortable request,
-// and the drill-down for one customer. Components read through the hook.
-// ============================================================
-
 import * as React from "react";
-
 import {
-  CustomerOrderConsumptionApiError,
-  requestCustomerOrderConsumptionDetail,
-  requestCustomerOrderConsumptionReport,
+  fetchCustomerOrderConsumptionDetailClient,
+  fetchCustomerOrderConsumptionReportClient,
 } from "../api/customer-order-consumption.client";
-import { getRollingThirtyDayRange } from "../services/customer-order-consumption.helpers";
 import type {
   AppliedFilterContext,
   CustomerOrderConsumptionDetail,
   CustomerOrderConsumptionReportResponse,
 } from "../types/customer-order-consumption.types";
 
-export interface SelectedCustomerTarget {
+export interface DrillDownTarget {
   customerCode: string;
-  customerName: string;
+  customerName?: string;
+  productId?: number | null;
+  productName?: string | null;
 }
 
 export interface CustomerOrderConsumptionReportContextValue {
+  appliedFilters: AppliedFilterContext | null;
   report: CustomerOrderConsumptionReportResponse | null;
-  draftFilters: AppliedFilterContext;
-  appliedFilters: AppliedFilterContext;
-  setDraftFilters: React.Dispatch<React.SetStateAction<AppliedFilterContext>>;
-  applyFilters(): Promise<void>;
-  clearFilters(): Promise<void>;
-  refresh(): Promise<void>;
-  isInitialLoading: boolean;
-  isRefreshing: boolean;
   error: string | null;
-  selectedCustomer: SelectedCustomerTarget | null;
-  detail: CustomerOrderConsumptionDetail | null;
-  isDetailLoading: boolean;
-  detailError: string | null;
-  openCustomerDetail(target: SelectedCustomerTarget): Promise<void>;
-  closeCustomerDetail(): void;
+  isLoading: boolean;
+  isInitialLoading: boolean;
+  applyFilters: (next: AppliedFilterContext) => Promise<boolean>;
+  refresh: () => Promise<boolean>;
+  drillDownTarget: DrillDownTarget | null;
+  drillDownDetail: CustomerOrderConsumptionDetail | null;
+  isDrillDownLoading: boolean;
+  drillDownError: string | null;
+  openDrillDown: (target: DrillDownTarget) => void;
+  closeDrillDown: () => void;
 }
 
-export const CustomerOrderConsumptionReportContext =
-  React.createContext<CustomerOrderConsumptionReportContextValue | undefined>(
-    undefined
-  );
+const CustomerOrderConsumptionReportContext =
+  React.createContext<CustomerOrderConsumptionReportContextValue | null>(null);
 
-export interface CustomerOrderConsumptionReportProviderProps {
-  children: React.ReactNode;
-}
-
-function describeError(error: unknown, fallback: string): string {
-  if (error instanceof CustomerOrderConsumptionApiError) return error.message;
-  if (error instanceof Error && error.message) return error.message;
-  return fallback;
+function defaultInitialDates(): { startDate: string; endDate: string } {
+  const now = new Date();
+  const year = now.getFullYear();
+  const month = String(now.getMonth() + 1).padStart(2, "0");
+  const day = String(now.getDate()).padStart(2, "0");
+  return {
+    startDate: `${year}-${month}-01`,
+    endDate: `${year}-${month}-${day}`,
+  };
 }
 
 export function CustomerOrderConsumptionReportProvider({
   children,
-}: CustomerOrderConsumptionReportProviderProps) {
-  const [initialFilters] = React.useState<AppliedFilterContext>(() =>
-    getRollingThirtyDayRange(new Date())
-  );
-  const [report, setReport] =
-    React.useState<CustomerOrderConsumptionReportResponse | null>(null);
-  const [draftFilters, setDraftFilters] =
-    React.useState<AppliedFilterContext>(initialFilters);
-  const [appliedFilters, setAppliedFilters] =
-    React.useState<AppliedFilterContext>(initialFilters);
-  const [isLoading, setIsLoading] = React.useState(true);
-  const [error, setError] = React.useState<string | null>(null);
-  const [selectedCustomer, setSelectedCustomer] =
-    React.useState<SelectedCustomerTarget | null>(null);
-  const [detail, setDetail] = React.useState<CustomerOrderConsumptionDetail | null>(null);
-  const [isDetailLoading, setIsDetailLoading] = React.useState(false);
-  const [detailError, setDetailError] = React.useState<string | null>(null);
-
-  const reportController = React.useRef<AbortController | null>(null);
-  const detailController = React.useRef<AbortController | null>(null);
-
-  const requestReport = React.useCallback(
-    async (filters: AppliedFilterContext): Promise<void> => {
-      reportController.current?.abort();
-      detailController.current?.abort();
-
-      const controller = new AbortController();
-      reportController.current = controller;
-      setIsLoading(true);
-      setError(null);
-      // A new window makes an open drawer meaningless; it would show rows
-      // that are no longer part of the table behind it.
-      setSelectedCustomer(null);
-      setDetail(null);
-      setIsDetailLoading(false);
-
-      try {
-        const next = await requestCustomerOrderConsumptionReport(
-          filters,
-          controller.signal
-        );
-        if (controller.signal.aborted || reportController.current !== controller) return;
-        setReport(next);
-      } catch (requestError) {
-        if (controller.signal.aborted || reportController.current !== controller) return;
-        setReport(null);
-        setError(describeError(requestError, "Unable to load the report."));
-      } finally {
-        if (reportController.current === controller) {
-          reportController.current = null;
-          setIsLoading(false);
-        }
-      }
-    },
-    []
-  );
-
-  React.useEffect(() => {
-    void requestReport(initialFilters);
-    return () => {
-      reportController.current?.abort();
-      reportController.current = null;
-      detailController.current?.abort();
-      detailController.current = null;
+}: {
+  children: React.ReactNode;
+}): React.ReactElement {
+  const [appliedFilters, setAppliedFilters] = React.useState<AppliedFilterContext | null>(() => {
+    const dates = defaultInitialDates();
+    return {
+      startDate: dates.startDate,
+      endDate: dates.endDate,
     };
-  }, [initialFilters, requestReport]);
+  });
 
-  const applyFilters = React.useCallback(async (): Promise<void> => {
-    setAppliedFilters(draftFilters);
-    await requestReport(draftFilters);
-  }, [draftFilters, requestReport]);
+  const [report, setReport] = React.useState<CustomerOrderConsumptionReportResponse | null>(null);
+  const [error, setError] = React.useState<string | null>(null);
+  const [isLoading, setIsLoading] = React.useState<boolean>(false);
+  const [isInitialLoading, setIsInitialLoading] = React.useState<boolean>(true);
 
-  const clearFilters = React.useCallback(async (): Promise<void> => {
-    const next = getRollingThirtyDayRange(new Date());
-    setDraftFilters(next);
-    setAppliedFilters(next);
-    await requestReport(next);
-  }, [requestReport]);
+  // Drill-down state
+  const [drillDownTarget, setDrillDownTarget] = React.useState<DrillDownTarget | null>(null);
+  const [drillDownDetail, setDrillDownDetail] = React.useState<CustomerOrderConsumptionDetail | null>(null);
+  const [isDrillDownLoading, setIsDrillDownLoading] = React.useState<boolean>(false);
+  const [drillDownError, setDrillDownError] = React.useState<string | null>(null);
 
-  const refresh = React.useCallback(async (): Promise<void> => {
-    await requestReport(appliedFilters);
-  }, [appliedFilters, requestReport]);
+  // Track latest request sequence so rapid filter clicks never let stale responses overwrite newer ones
+  const requestSeqRef = React.useRef<number>(0);
+  const initialFiltersRef = React.useRef<AppliedFilterContext | null>(appliedFilters);
 
-  const openCustomerDetail = React.useCallback(
-    async (target: SelectedCustomerTarget): Promise<void> => {
-      detailController.current?.abort();
-      const controller = new AbortController();
-      detailController.current = controller;
-
-      setSelectedCustomer(target);
-      setDetail(null);
-      setDetailError(null);
-      setIsDetailLoading(true);
-
-      try {
-        const next = await requestCustomerOrderConsumptionDetail(
-          appliedFilters,
-          target.customerCode,
-          controller.signal
-        );
-        if (controller.signal.aborted || detailController.current !== controller) return;
-        setDetail(next);
-      } catch (requestError) {
-        if (controller.signal.aborted || isAbortName(requestError)) return;
-        if (detailController.current === controller) {
-          setDetailError(describeError(requestError, "Unable to load the supporting records."));
-        }
-      } finally {
-        if (detailController.current === controller) {
-          detailController.current = null;
-          setIsDetailLoading(false);
-        }
+  // Main Report Fetch returning true on success and false on failure/stale
+  const loadReport = React.useCallback(async (filters: AppliedFilterContext): Promise<boolean> => {
+    const seq = ++requestSeqRef.current;
+    setIsLoading(true);
+    setError(null);
+    try {
+      const data = await fetchCustomerOrderConsumptionReportClient(filters);
+      if (seq !== requestSeqRef.current) return false;
+      setReport(data);
+      return true;
+    } catch (err) {
+      if (seq !== requestSeqRef.current) return false;
+      console.error("[CustomerOrderConsumption] Load report error:", err);
+      setError(err instanceof Error ? err.message : "Failed to load report data.");
+      return false;
+    } finally {
+      if (seq === requestSeqRef.current) {
+        setIsLoading(false);
+        setIsInitialLoading(false);
       }
+    }
+  }, []);
+
+  // Trigger initial load once on mount with default reporting window
+  React.useEffect(() => {
+    if (initialFiltersRef.current) {
+      void loadReport(initialFiltersRef.current);
+    }
+  }, [loadReport]);
+
+  const applyFilters = React.useCallback(
+    async (next: AppliedFilterContext): Promise<boolean> => {
+      setAppliedFilters(next);
+      return await loadReport(next);
+    },
+    [loadReport]
+  );
+
+  const refresh = React.useCallback(async (): Promise<boolean> => {
+    if (!appliedFilters) return false;
+    return await loadReport(appliedFilters);
+  }, [appliedFilters, loadReport]);
+
+  // Drill-down Document Fetch
+  const openDrillDown = React.useCallback(
+    (target: DrillDownTarget) => {
+      setDrillDownTarget(target);
+      if (!appliedFilters) return;
+
+      setIsDrillDownLoading(true);
+      setDrillDownError(null);
+      fetchCustomerOrderConsumptionDetailClient(
+        appliedFilters,
+        target.customerCode,
+        target.productId ?? undefined
+      )
+        .then((detail) => {
+          setDrillDownDetail({
+            ...detail,
+            customerName: target.customerName || target.customerCode,
+            productName: target.productName || detail.productName,
+          });
+        })
+        .catch((err) => {
+          console.error("[CustomerOrderConsumption] Drilldown error:", err);
+          setDrillDownError(err instanceof Error ? err.message : "Failed to load supporting documents.");
+        })
+        .finally(() => {
+          setIsDrillDownLoading(false);
+        });
     },
     [appliedFilters]
   );
 
-  const closeCustomerDetail = React.useCallback((): void => {
-    detailController.current?.abort();
-    detailController.current = null;
-    setSelectedCustomer(null);
-    setDetail(null);
-    setDetailError(null);
-    setIsDetailLoading(false);
+  const closeDrillDown = React.useCallback(() => {
+    setDrillDownTarget(null);
+    setDrillDownDetail(null);
+    setDrillDownError(null);
   }, []);
 
-  const value = React.useMemo<CustomerOrderConsumptionReportContextValue>(
+  // Context value memoized unconditionally
+  const contextValue = React.useMemo<CustomerOrderConsumptionReportContextValue>(
     () => ({
-      report,
-      draftFilters,
       appliedFilters,
-      setDraftFilters,
-      applyFilters,
-      clearFilters,
-      refresh,
-      isInitialLoading: isLoading && report === null,
-      isRefreshing: isLoading && report !== null,
+      report,
       error,
-      selectedCustomer,
-      detail,
-      isDetailLoading,
-      detailError,
-      openCustomerDetail,
-      closeCustomerDetail,
+      isLoading,
+      isInitialLoading,
+      applyFilters,
+      refresh,
+      drillDownTarget,
+      drillDownDetail,
+      isDrillDownLoading,
+      drillDownError,
+      openDrillDown,
+      closeDrillDown,
     }),
     [
       appliedFilters,
-      applyFilters,
-      clearFilters,
-      closeCustomerDetail,
-      detail,
-      detailError,
-      draftFilters,
+      report,
       error,
       isLoading,
-      isDetailLoading,
-      openCustomerDetail,
+      isInitialLoading,
+      applyFilters,
       refresh,
-      report,
-      selectedCustomer,
+      drillDownTarget,
+      drillDownDetail,
+      isDrillDownLoading,
+      drillDownError,
+      openDrillDown,
+      closeDrillDown,
     ]
   );
 
   return (
-    <CustomerOrderConsumptionReportContext.Provider value={value}>
+    <CustomerOrderConsumptionReportContext.Provider value={contextValue}>
       {children}
     </CustomerOrderConsumptionReportContext.Provider>
   );
 }
 
-/** AbortError check kept local so the provider needs no server-side import. */
-function isAbortName(error: unknown): boolean {
-  return (
-    typeof error === "object" &&
-    error !== null &&
-    (error as { name?: unknown }).name === "AbortError"
-  );
+export function useCustomerOrderConsumptionReportContext(): CustomerOrderConsumptionReportContextValue {
+  const ctx = React.useContext(CustomerOrderConsumptionReportContext);
+  if (!ctx) {
+    throw new Error(
+      "useCustomerOrderConsumptionReportContext must be used within a CustomerOrderConsumptionReportProvider."
+    );
+  }
+  return ctx;
 }

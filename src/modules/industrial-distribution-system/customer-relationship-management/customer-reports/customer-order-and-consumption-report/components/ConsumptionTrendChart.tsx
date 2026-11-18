@@ -1,324 +1,251 @@
+// src/modules/industrial-distribution-system/customer-relationship-management/customer-reports/customer-order-and-consumption-report/components/ConsumptionTrendChart.tsx
+// ============================================================
+// Interactive Monthly Trend & Consumption Distribution Analytics.
+// Powered by Recharts with smooth 500ms easing animations.
+// ============================================================
+
 "use client";
 
-// ============================================================
-// ConsumptionTrendChart.tsx
-// Monthly demand. Cylinder and LPG kg are drawn as separate bars and never
-// stacked: stacking would imply the two bases add up to one demand figure.
-// ============================================================
-
 import * as React from "react";
+import { motion } from "framer-motion";
 import {
   Bar,
-  BarChart,
   CartesianGrid,
+  Cell,
+  ComposedChart,
   Legend,
+  Line,
+  Pie,
+  PieChart,
   ResponsiveContainer,
   Tooltip,
   XAxis,
   YAxis,
 } from "recharts";
-
-import { Card, CardContent } from "@/components/ui/card";
-import { Label } from "@/components/ui/label";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
-
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { useCustomerOrderConsumptionReport } from "../hooks/useCustomerOrderConsumptionReport";
-import {
-  formatKgCompact,
-  formatQty,
-  formatYearMonth,
-} from "../services/customer-order-consumption.helpers";
-import type {
-  AppliedFilterContext,
-  ReportTrendPoint,
-} from "../types/customer-order-consumption.types";
+import { formatKgCompact, formatQty } from "../services/customer-order-consumption.helpers";
 
-type TrendMetric = "kg" | "events" | "qty";
+const COLORS = ["#2563eb", "#16a34a", "#ea580c", "#8b5cf6", "#06b6d4"];
 
-// A bucket cut mid-month draws a shorter bar than a full month, and a reader
-// comparing the two needs to know which is which.
-interface SeriesOptions {
-  partial: Set<string>;
-}
+const EMPTY_TREND: never[] = [];
+const EMPTY_ROWS: never[] = [];
 
-/** Month buckets the applied window does not cover end to end. */
-function partialMonthKeys(filters: AppliedFilterContext): Set<string> {
-  const partial = new Set<string>();
-  const { startDate, endDate } = filters;
-
-  if (startDate.length === 10 && startDate.slice(8, 10) !== "01") {
-    partial.add(startDate.slice(0, 7));
-  }
-  if (endDate.length === 10) {
-    const key = endDate.slice(0, 7);
-    const lastDay = new Date(
-      Date.UTC(Number(key.slice(0, 4)), Number(key.slice(5, 7)), 0)
-    ).getUTCDate();
-    if (Number(endDate.slice(8, 10)) !== lastDay) partial.add(key);
-  }
-  return partial;
-}
-
-interface MonthSeries {
-  yearMonth: string;
-  label: string;
-  cylinder: number;
-  lpg: number;
-  partial: boolean;
-}
-
-const METRIC_READERS: Record<TrendMetric, (point: ReportTrendPoint) => number> = {
-  kg: (point) => Number(point.netKg.toFixed(3)),
-  events: (point) => point.orderCount,
-  qty: (point) => Number(point.grossQty.toFixed(3)),
-};
-
-const METRIC_LABELS: Record<TrendMetric, string> = {
-  kg: "Net kg (proxy vs measured)",
-  events: "Ordering / billing events",
-  qty: "Gross quantity",
-};
-
-/** Pivots the long per-channel series into one row per month. */
-function toMonthSeries(
-  points: ReportTrendPoint[],
-  metric: TrendMetric,
-  options: SeriesOptions
-): MonthSeries[] {
-  const read = METRIC_READERS[metric];
-  const byMonth = new Map<string, MonthSeries>();
-
-  for (const point of points) {
-    const current =
-      byMonth.get(point.yearMonth) ??
-      {
-        yearMonth: point.yearMonth,
-        label: formatYearMonth(point.yearMonth),
-        cylinder: 0,
-        lpg: 0,
-        partial: options.partial.has(point.yearMonth),
-      };
-    if (point.channel === "CYLINDER") current.cylinder += read(point);
-    else current.lpg += read(point);
-    byMonth.set(point.yearMonth, current);
-  }
-
-  return [...byMonth.values()].sort((a, b) => a.yearMonth.localeCompare(b.yearMonth));
-}
-
-function formatValue(metric: TrendMetric, value: number): string {
-  if (metric === "kg") return `${formatKgCompact(value)} kg`;
-  return formatQty(value);
-}
-
-export function ConsumptionTrendChart(): React.ReactElement | null {
+export function ConsumptionTrendChart(): React.ReactElement {
   const { report } = useCustomerOrderConsumptionReport();
-  const [metric, setMetric] = React.useState<TrendMetric>("kg");
 
-  const partial = React.useMemo(
-    () => (report ? partialMonthKeys(report.filters) : new Set<string>()),
-    [report]
-  );
+  const monthlyTrend = report?.monthlyTrend ?? EMPTY_TREND;
+  const rows = report?.rows ?? EMPTY_ROWS;
 
-  const series = React.useMemo(
-    () => (report ? toMonthSeries(report.monthlyTrend, metric, { partial }) : []),
-    [report, metric, partial]
-  );
+  // All hooks declared unconditionally before any early returns per ids-guide
+  const trendData = React.useMemo(() => {
+    const map = new Map<
+      string,
+      {
+        month: string;
+        cylinderKg: number;
+        lpgKg: number;
+        totalNetKg: number;
+        orderKeys: Set<string>;
+        orderCount: number;
+      }
+    >();
 
-  // Peak month per channel, in that channel's own unit, so the callout never
-  // needs the two kg bases to be added together.
-  const peaks = React.useMemo(() => {
-    const read = METRIC_READERS[metric];
-    let cylinder: { label: string; value: number } | null = null;
-    let lpg: { label: string; value: number } | null = null;
-    for (const point of report?.monthlyTrend ?? []) {
-      const value = read(point);
-      if (value <= 0) continue;
-      const candidate = { label: formatYearMonth(point.yearMonth), value };
-      if (point.channel === "CYLINDER") {
-        if (!cylinder || value > cylinder.value) cylinder = candidate;
-      } else if (!lpg || value > lpg.value) {
-        lpg = candidate;
+    for (const pt of monthlyTrend) {
+      let entry = map.get(pt.yearMonth);
+      if (!entry) {
+        entry = {
+          month: pt.yearMonth,
+          cylinderKg: 0,
+          lpgKg: 0,
+          totalNetKg: 0,
+          orderKeys: new Set<string>(),
+          orderCount: 0,
+        };
+        map.set(pt.yearMonth, entry);
+      }
+      if (pt.channel === "CYLINDER") {
+        entry.cylinderKg += pt.netKg;
+      } else {
+        entry.lpgKg += pt.netKg;
+      }
+      entry.totalNetKg += pt.netKg;
+      // Dedupe distinct order keys across CYLINDER and LPG channels in the same month
+      if (pt.orderKeys && pt.orderKeys.length > 0) {
+        for (const k of pt.orderKeys) entry.orderKeys.add(k);
+        entry.orderCount = entry.orderKeys.size;
+      } else {
+        entry.orderCount += pt.orderCount;
       }
     }
-    return { cylinder, lpg };
-  }, [report, metric]);
 
-  if (!report || series.length === 0) return null;
+    // Project explicit fields so internal orderKeys Set is excluded without unused destructuring bindings
+    return [...map.values()]
+      .sort((a, b) => a.month.localeCompare(b.month))
+      .map((entry) => ({
+        month: entry.month,
+        cylinderKg: Math.round(entry.cylinderKg * 100) / 100,
+        lpgKg: Math.round(entry.lpgKg * 100) / 100,
+        totalNetKg: Math.round(entry.totalNetKg * 100) / 100,
+        orderCount: entry.orderCount,
+      }));
+  }, [monthlyTrend]);
 
-  const hasCylinder = series.some((row) => row.cylinder !== 0);
-  const hasLpg = series.some((row) => row.lpg !== 0);
+  // Cylinder size breakdown across all industrial parent products (including Metered/WIWO-billed parent cylinders)
+  const sizeBreakdown = React.useMemo(() => {
+    const sizeMap = new Map<string, number>();
+
+    for (const r of rows) {
+      for (const p of r.products) {
+        if (p.cylinderSizeKg && p.netKg > 0) {
+          const label = `${p.cylinderSizeKg} kg`;
+          sizeMap.set(label, (sizeMap.get(label) ?? 0) + p.netKg);
+        }
+      }
+    }
+
+    return [...sizeMap.entries()]
+      .map(([name, value]) => ({ name, value: Math.round(value * 100) / 100 }))
+      .sort((a, b) => b.value - a.value);
+  }, [rows]);
+
+  if (!report) return <></>;
 
   return (
-    <Card className="border-border/80">
-      <CardContent className="space-y-3 px-4 py-4">
-        <div className="flex flex-wrap items-center justify-between gap-2">
-          <div className="flex items-baseline gap-2">
-            <h2 className="text-sm font-semibold uppercase tracking-wider">
-              Monthly demand by channel
-            </h2>
-            <span className="text-xs text-muted-foreground">
-              {series.length} month{series.length === 1 ? "" : "s"}
-            </span>
-          </div>
-          <div className="flex items-center gap-2">
-            <Label htmlFor="coc-trend-metric" className="text-xs text-muted-foreground">
-              Metric
-            </Label>
-            <Select value={metric} onValueChange={(next) => setMetric(next as TrendMetric)}>
-              <SelectTrigger id="coc-trend-metric" className="w-[220px]">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                {(Object.keys(METRIC_LABELS) as TrendMetric[]).map((key) => (
-                  <SelectItem key={key} value={key}>
-                    {METRIC_LABELS[key]}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </div>
-        </div>
+    <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+      {/* Monthly Net Kg vs Order Count Trend */}
+      <motion.div
+        className="lg:col-span-2"
+        initial={{ opacity: 0, y: 10 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ duration: 0.28, ease: "easeOut" }}
+      >
+        <Card className="shadow-none border bg-card">
+          <CardHeader className="p-4 pb-2 border-b">
+            <CardTitle className="text-sm font-semibold">
+              Monthly Net Consumption Volume vs. Order Frequency
+            </CardTitle>
+            <p className="text-xs text-muted-foreground">
+              Dual-axis monthly time-series tracking net purchased kilograms and distinct order occurrences.
+            </p>
+          </CardHeader>
+          <CardContent className="p-4 pt-6">
+            <div className="h-[320px] w-full">
+              <ResponsiveContainer width="100%" height="100%">
+                <ComposedChart data={trendData} margin={{ top: 10, right: 20, bottom: 20, left: 10 }}>
+                  <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#e2e8f0" />
+                  <XAxis dataKey="month" tick={{ fontSize: 11 }} />
+                  <YAxis
+                    yAxisId="left"
+                    tick={{ fontSize: 11 }}
+                    tickFormatter={(val) => {
+                      const num = Number(val) || 0;
+                      if (Math.abs(num) >= 1000) {
+                        const tons = num / 1000;
+                        return `${Number.isInteger(tons) ? tons : tons.toFixed(1)}t`;
+                      }
+                      return `${Math.round(num)} kg`;
+                    }}
+                  />
+                  <YAxis
+                    yAxisId="right"
+                    orientation="right"
+                    tick={{ fontSize: 11 }}
+                    tickFormatter={(val) => `${val}`}
+                  />
+                  <Tooltip
+                    // Let Recharts infer formatter value/name types to avoid explicit any
+                    formatter={(val, name) => {
+                      const num = typeof val === "number" ? val : Number(val ?? 0);
+                      const label = name !== undefined ? String(name) : "Weight";
+                      if (label === "Order Frequency") return [formatQty(num), label];
+                      return [formatKgCompact(num), label];
+                    }}
+                  />
+                  <Legend wrapperStyle={{ fontSize: 12, paddingTop: 10 }} />
+                  <Bar
+                    yAxisId="left"
+                    dataKey="cylinderKg"
+                    name="Cylinder Net Kg"
+                    fill="#2563eb"
+                    radius={[4, 4, 0, 0]}
+                    animationDuration={500}
+                  />
+                  <Bar
+                    yAxisId="left"
+                    dataKey="lpgKg"
+                    name="Metered / WIWO LPG Net Kg"
+                    fill="#f59e0b"
+                    radius={[4, 4, 0, 0]}
+                    animationDuration={500}
+                  />
+                  <Line
+                    yAxisId="right"
+                    type="monotone"
+                    dataKey="orderCount"
+                    name="Order Frequency"
+                    stroke="#10b981"
+                    strokeWidth={2.5}
+                    dot={{ r: 4 }}
+                    animationDuration={500}
+                  />
+                </ComposedChart>
+              </ResponsiveContainer>
+            </div>
+          </CardContent>
+        </Card>
+      </motion.div>
 
-        {peaks.cylinder || peaks.lpg ? (
-          <p className="flex flex-wrap gap-x-4 gap-y-1 text-xs text-muted-foreground">
-            {peaks.cylinder ? (
-              <span>
-                Cylinder / bulk peak:{" "}
-                <span className="font-medium text-foreground">
-                  {peaks.cylinder.label} ({formatValue(metric, peaks.cylinder.value)})
-                </span>
-              </span>
-            ) : null}
-            {peaks.lpg ? (
-              <span>
-                LPG peak:{" "}
-                <span className="font-medium text-foreground">
-                  {peaks.lpg.label} ({formatValue(metric, peaks.lpg.value)})
-                </span>
-              </span>
-            ) : null}
-          </p>
-        ) : null}
-
-        <div className="h-64 w-full">
-          <ResponsiveContainer width="100%" height="100%">
-            <BarChart data={series} margin={{ top: 8, right: 12, bottom: 4, left: 4 }}>
-              <CartesianGrid strokeDasharray="3 3" vertical={false} />
-              <XAxis
-                dataKey="label"
-                tick={{ fontSize: 11 }}
-                tickFormatter={(value: unknown, index: number) =>
-                  series[index]?.partial ? `${String(value)} *` : String(value)
-                }
-              />
-              <YAxis
-                tick={{ fontSize: 11 }}
-                width={64}
-                tickFormatter={(value) => formatQty(Number(value))}
-              />
-              <Tooltip
-                formatter={(value: unknown, name: unknown) => [
-                  formatValue(metric, Number(value ?? 0)),
-                  String(name ?? ""),
-                ]}
-              />
-              <Legend wrapperStyle={{ fontSize: 11 }} />
-              {hasCylinder ? (
-                <Bar
-                  dataKey="cylinder"
-                  name="Cylinder / bulk (proxy kg)"
-                  fill="#d97706"
-                  radius={[3, 3, 0, 0]}
-                  maxBarSize={38}
-                />
-              ) : null}
-              {hasLpg ? (
-                <Bar
-                  dataKey="lpg"
-                  name="Metered & weighed LPG (kg)"
-                  fill="#0284c7"
-                  radius={[3, 3, 0, 0]}
-                  maxBarSize={38}
-                />
-              ) : null}
-            </BarChart>
-          </ResponsiveContainer>
-        </div>
-
-        <TrendValuesTable series={series} metric={metric} />
-
-        <p className="text-xs text-muted-foreground">
-          Bars are shown side by side rather than stacked because cylinder kilograms
-          are inferred from purchased pieces while LPG kilograms are read from a
-          meter or weighbridge.
-          {partial.size > 0
-            ? " A month marked * is partial: the window starts or ends mid-month, so its bar is shorter by construction, not by demand."
-            : ""}
-        </p>
-      </CardContent>
-    </Card>
-  );
-}
-
-/**
- * The same numbers the bars encode, for keyboard and screen-reader readers and
- * for anyone who wants to check a bar against a figure.
- */
-function TrendValuesTable({
-  series,
-  metric,
-}: {
-  series: MonthSeries[];
-  metric: TrendMetric;
-}): React.ReactElement {
-  return (
-    <details className="text-xs">
-      <summary className="cursor-pointer text-muted-foreground">
-        Show the {series.length} month values behind the chart
-      </summary>
-      <table className="mt-2 w-full max-w-lg border-collapse text-xs">
-        <caption className="sr-only">
-          Monthly demand by channel for the selected metric
-        </caption>
-        <thead>
-          <tr className="border-b text-left">
-            <th scope="col" className="py-1 pr-3 font-medium">
-              Month
-            </th>
-            <th scope="col" className="py-1 pr-3 text-right font-medium">
-              Cylinder / bulk
-            </th>
-            <th scope="col" className="py-1 text-right font-medium">
-              Metered &amp; weighed LPG
-            </th>
-          </tr>
-        </thead>
-        <tbody>
-          {series.map((row) => (
-            <tr key={row.yearMonth} className="border-b border-border/50 last:border-0">
-              <th scope="row" className="py-1 pr-3 text-left font-normal">
-                {row.label}
-                {row.partial ? (
-                  <span className="text-muted-foreground"> (partial)</span>
-                ) : null}
-              </th>
-              <td className="py-1 pr-3 text-right tabular-nums">
-                {row.cylinder === 0 ? "—" : formatValue(metric, row.cylinder)}
-              </td>
-              <td className="py-1 text-right tabular-nums">
-                {row.lpg === 0 ? "—" : formatValue(metric, row.lpg)}
-              </td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
-    </details>
+      {/* Industrial Cylinder Sizing Breakdown */}
+      <motion.div
+        initial={{ opacity: 0, y: 10 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ duration: 0.28, delay: 0.08, ease: "easeOut" }}
+      >
+        <Card className="shadow-none border bg-card">
+          <CardHeader className="p-4 pb-2 border-b">
+            <CardTitle className="text-sm font-semibold">
+              Cylinder Size Distribution
+            </CardTitle>
+            <p className="text-xs text-muted-foreground">
+              Purchased weight split by industrial cylinder category size.
+            </p>
+          </CardHeader>
+          <CardContent className="p-4 pt-6 flex flex-col items-center justify-center">
+            {sizeBreakdown.length === 0 ? (
+              <div className="h-[280px] flex items-center justify-center text-xs text-muted-foreground">
+                No cylinder size data in this window.
+              </div>
+            ) : (
+              <div className="h-[300px] w-full">
+                <ResponsiveContainer width="100%" height="100%">
+                  <PieChart>
+                    <Pie
+                      data={sizeBreakdown}
+                      dataKey="value"
+                      nameKey="name"
+                      cx="50%"
+                      cy="45%"
+                      outerRadius={85}
+                      innerRadius={45}
+                      paddingAngle={3}
+                      label={(entry) => `${entry.name} (${Math.round(entry.percent * 100)}%)`}
+                      animationDuration={500}
+                    >
+                      {sizeBreakdown.map((_, index) => (
+                        <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
+                      ))}
+                    </Pie>
+                    {/* Format pie tooltip weight using Recharts' inferred value type */}
+                    <Tooltip formatter={(val) => formatKgCompact(Number(val) || 0)} />
+                    <Legend wrapperStyle={{ fontSize: 11 }} />
+                  </PieChart>
+                </ResponsiveContainer>
+              </div>
+            )}
+          </CardContent>
+        </Card>
+      </motion.div>
+    </div>
   );
 }

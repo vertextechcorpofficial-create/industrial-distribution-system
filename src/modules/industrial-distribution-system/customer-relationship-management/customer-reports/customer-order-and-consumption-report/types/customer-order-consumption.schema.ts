@@ -1,112 +1,112 @@
+// src/modules/industrial-distribution-system/customer-relationship-management/customer-reports/customer-order-and-consumption-report/types/customer-order-consumption.schema.ts
 // ============================================================
-// customer-order-consumption.schema.ts
-// Zod schemas validating inbound BFF query params.
-// Interfaces live in customer-order-consumption.types.ts.
+// Zod schemas for query validation, filter parsing, and drill-down requests.
+// Placement: CRM -> Customer Reports -> Customer Order & Consumption Report
 // ============================================================
 
 import { z } from "zod";
 
-// Directus date filters and the Manila calendar both require plain ISO dates.
-const isoDateString = z
+const DATE_REGEX = /^\d{4}-\d{2}-\d{2}$/;
+
+export const dateStringSchema = z
   .string()
-  .regex(/^\d{4}-\d{2}-\d{2}$/, "Date must be in YYYY-MM-DD format");
+  .regex(DATE_REGEX, "Must be an ISO date (YYYY-MM-DD).");
 
-// ------------------------------------------------------------
-// Filter schema — validates all inbound GET query params
-// ------------------------------------------------------------
-// Directus compares these verbatim, so a pasted code with padding would match
-// nothing and read as "this customer has no demand".
-const codeString = (max: number) => z.string().trim().min(1).max(max);
+export const consumptionChannelSchema = z.enum(["CYLINDER", "LPG"]);
 
-// The pickers are multi-selects. A selection list is capped because it becomes
-// an `_in` filter in a Directus URL, and because a reader who has picked 500
-// branches is asking for a different report than this page serves.
-const MAX_SELECTED = 50;
-const tooMany = `At most ${MAX_SELECTED} can be selected at once`;
-
-const codeList = (max: number) =>
-  z.array(codeString(max)).max(MAX_SELECTED, tooMany).optional();
-
-const idList = () =>
-  z.array(z.coerce.number().int().positive()).max(MAX_SELECTED, tooMany).optional();
-
-const filterShape = z.object({
-  startDate: isoDateString,
-  endDate: isoDateString,
-  customerCodes: codeList(64),
-  branchIds: idList(),
-  salesmanIds: idList(),
-  classificationIds: idList(),
-  channel: z.enum(["CYLINDER", "LPG"]).optional(),
-});
-
-// An inverted window would silently return zero rows and read as
-// "no demand", so it is rejected rather than normalised.
-const orderedWindow = (value: { startDate: string; endDate: string }) =>
-  value.startDate <= value.endDate;
-
-const windowIssue = {
-  path: ["startDate"],
-  message: "startDate must not be after endDate",
-};
-
-export const customerOrderConsumptionFilterSchema =
-  filterShape.refine(orderedWindow, windowIssue);
-
-export type CustomerOrderConsumptionFilterInput = z.infer<
-  typeof customerOrderConsumptionFilterSchema
->;
-
-// Drill-down reuses the filter shape but always needs a customer. The
-// refinement is re-applied here because extending an already-refined schema
-// would drop the check and let an inverted window through.
-export const customerOrderConsumptionDetailSchema = filterShape
-  .extend({ customerDetail: codeString(64) })
-  .refine(orderedWindow, windowIssue);
-
-export type CustomerOrderConsumptionDetailInput = z.infer<
-  typeof customerOrderConsumptionDetailSchema
->;
-
-// Lookups are typeahead reads; the type is whitelisted so an arbitrary
-// collection name can never reach Directus.
-export const reportLookupQuerySchema = z.object({
-  type: z.enum(["customers", "branches", "salesmen", "classifications"]),
-  q: z.string().max(100).optional(),
-});
-
-export type ReportLookupQueryInput = z.infer<typeof reportLookupQuerySchema>;
-
-// ------------------------------------------------------------
-// Query string -> schema input
-// ------------------------------------------------------------
-
-// A multi-select sends the same key once per pick, so only these keys are
-// collected into arrays. Everything else stays a single string.
-const LIST_PARAM_KEYS = new Set([
-  "customerCodes",
-  "branchIds",
-  "salesmanIds",
-  "classificationIds",
-]);
-
-export function readFilterParams(
-  params: URLSearchParams
-): Record<string, string | string[]> {
-  const raw: Record<string, string | string[]> = {};
-  for (const key of new Set(params.keys())) {
-    const values = params.getAll(key);
-    raw[key] = LIST_PARAM_KEYS.has(key) ? values : (values[0] ?? "");
+export const customerOrderConsumptionFilterSchema = z.object({
+  startDate: dateStringSchema,
+  endDate: dateStringSchema,
+  customerCodes: z.array(z.string().min(1)).optional(),
+  branchIds: z.array(z.number().int().positive()).optional(),
+  salesmanIds: z.array(z.number().int().positive()).optional(),
+  classificationIds: z.array(z.number().int().positive()).optional(),
+  categoryIds: z.array(z.number().int().positive()).optional(),
+  channel: consumptionChannelSchema.optional(),
+  search: z.string().max(100).optional(),
+}).refine(
+  (data) => data.startDate <= data.endDate,
+  {
+    message: "startDate must not be after endDate.",
+    path: ["startDate"],
   }
-  return raw;
+);
+
+export const customerOrderConsumptionDetailSchema = customerOrderConsumptionFilterSchema.extend({
+  customerDetail: z.string().min(1, "customerDetail must be a customer code."),
+  // Positive IDs identify serialized cylinder products; -1 = Metered LPG, -2 = WIWO (Kg) LPG
+  productDetail: z.number().int().refine((n) => n !== 0, "Invalid product ID.").optional(),
+});
+
+export const reportLookupQuerySchema = z.object({
+  type: z.enum(["customer", "branch", "salesman", "classification", "category", "product"]),
+  query: z.string().max(100).optional(),
+  branchId: z.coerce.number().int().positive().optional(),
+});
+
+export type ValidatedFilterInput = z.infer<typeof customerOrderConsumptionFilterSchema>;
+export type ValidatedDetailInput = z.infer<typeof customerOrderConsumptionDetailSchema>;
+export type ValidatedLookupQuery = z.infer<typeof reportLookupQuerySchema>;
+
+/**
+ * Safely parses list params from URLSearchParams (repeated keys).
+ */
+export function readStringList(params: URLSearchParams, key: string): string[] {
+  return params
+    .getAll(key)
+    .flatMap((val) => val.split(","))
+    .map((val) => val.trim())
+    .filter(Boolean);
 }
 
-/** Reads one repeated param as a capped list of trimmed display labels. */
-export function readLabelList(params: URLSearchParams, key: string): string[] {
-  const labels = params
-    .getAll(key)
-    .map((label) => label.trim().slice(0, 200))
-    .filter((label) => label.length > 0)
-    .slice(0, MAX_SELECTED);
-  return labels;
+export function readNumberList(params: URLSearchParams, key: string): number[] {
+  return readStringList(params, key)
+    .map((val) => Number.parseInt(val, 10))
+    .filter((num) => Number.isFinite(num) && num > 0);
+}
+
+export function readLabelList(params: URLSearchParams, field: string): string[] {
+  return readStringList(params, field).slice(0, 50);
+}
+
+export function readFilterParams(params: URLSearchParams): Record<string, unknown> {
+  const result: Record<string, unknown> = {};
+
+  const start = params.get("startDate");
+  if (start) result.startDate = start.trim();
+
+  const end = params.get("endDate");
+  if (end) result.endDate = end.trim();
+
+  const channel = params.get("channel");
+  if (channel) result.channel = channel.trim();
+
+  const search = params.get("search");
+  if (search) result.search = search.trim();
+
+  const customerDetail = params.get("customerDetail");
+  if (customerDetail) result.customerDetail = customerDetail.trim();
+
+  const productDetail = params.get("productDetail");
+  if (productDetail) {
+    const num = Number.parseInt(productDetail, 10);
+    if (Number.isFinite(num) && num !== 0) result.productDetail = num;
+  }
+
+  const customerCodes = readStringList(params, "customerCodes");
+  if (customerCodes.length > 0) result.customerCodes = customerCodes;
+
+  const branchIds = readNumberList(params, "branchIds");
+  if (branchIds.length > 0) result.branchIds = branchIds;
+
+  const salesmanIds = readNumberList(params, "salesmanIds");
+  if (salesmanIds.length > 0) result.salesmanIds = salesmanIds;
+
+  const classificationIds = readNumberList(params, "classificationIds");
+  if (classificationIds.length > 0) result.classificationIds = classificationIds;
+
+  const categoryIds = readNumberList(params, "categoryIds");
+  if (categoryIds.length > 0) result.categoryIds = categoryIds;
+
+  return result;
 }
