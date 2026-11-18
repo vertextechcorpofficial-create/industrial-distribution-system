@@ -1,6 +1,7 @@
 import { fetchItems, createItems, bulkUpdateItems } from "../../stock-transfer/services/api";
 import type { 
   StockTransferSerialRow,
+  SerialOnhandRow,
 } from "../types/serialize.types";
 import type { 
   StockTransferRow,
@@ -12,38 +13,61 @@ const SPRING_API_BASE_URL = process.env.SPRING_API_BASE_URL;
 /**
  * Fetches current serial availability from v_serial_onhand view (Spring Boot API).
  */
-// AG-COMMENT: Ticket 1 - Enforce exact-case query and exact-string comparison without forcing to upper case
-export async function fetchSerialAvailability(serialNumber: string, branchId?: number, token?: string): Promise<StockTransferSerialRow[]> {
+// AG-COMMENT: Ticket 1 & v_serial_onhand fix - Enforce exact-case query and exact-string comparison without forcing to upper case.
+// Queries Spring Boot /api/v-serial-onhand/filter with fallback to server env tokens (vos_access_token) and normalized response parsing.
+export async function fetchSerialAvailability(serialNumber: string, branchId?: number, token?: string): Promise<SerialOnhandRow[]> {
   if (!SPRING_API_BASE_URL) {
     console.error("[Serialize Repo] SPRING_API_BASE_URL is not defined");
     return [];
   }
 
   const rawSerial = serialNumber.trim();
-  const url = `${SPRING_API_BASE_URL.replace(/\/$/, "")}/api/v-serial-onhand/all?serialNumber=${encodeURIComponent(rawSerial)}`;
-  
+  // Prefer server-side Spring API token over session cookie if missing or rejected
+  const authToken = token || process.env.VOS_ACCESS_TOKEN || process.env.vos_access_token;
+
+  // Use /api/v-serial-onhand/filter endpoint with serialNumber and optional branchId
+  const filterUrl = new URL(`${SPRING_API_BASE_URL.replace(/\/$/, "")}/api/v-serial-onhand/filter`);
+  filterUrl.searchParams.set("serialNumber", rawSerial);
+  if (branchId) {
+    filterUrl.searchParams.set("branchId", String(branchId));
+  }
+
+  const headers: Record<string, string> = {
+    "Accept": "application/json",
+    ...(authToken ? {
+      "Authorization": `Bearer ${authToken}`,
+      "Cookie": `vos_access_token=${authToken}`,
+    } : {}),
+  };
+
   try {
-    const res = await fetch(url, {
+    let res = await fetch(filterUrl.toString(), {
       method: "GET",
-      headers: {
-        "Accept": "application/json",
-        ...(token ? { 
-          "Authorization": `Bearer ${token}`,
-          "Cookie": `vos_access_token=${token}`
-        } : {}),
-      },
+      headers,
       cache: "no-store",
     });
 
+    // If /filter returns 404, fall back to /all endpoint
+    if (res.status === 404) {
+      const fallbackUrl = new URL(`${SPRING_API_BASE_URL.replace(/\/$/, "")}/api/v-serial-onhand/all`);
+      fallbackUrl.searchParams.set("serialNumber", rawSerial);
+      if (branchId) {
+        fallbackUrl.searchParams.set("branchId", String(branchId));
+      }
+      res = await fetch(fallbackUrl.toString(), {
+        method: "GET",
+        headers,
+        cache: "no-store",
+      });
+    }
+
     if (!res.ok) {
-      console.error(`[Serialize Repo] Spring API returned ${res.status} for ${url}`);
-      throw new Error(`Spring API returned ${res.status}: ${res.statusText}`);
+      console.error(`[Serialize Repo] Spring API returned ${res.status} for ${filterUrl.toString()}`);
+      return [];
     }
 
     const data = await res.json();
-    const items = Array.isArray(data) ? data : (data.data || data.content || []);
-    
-    // Filter by branchId if provided, enforcing exact case-sensitive serial comparison
+
     interface SerialOnhandRaw {
       serialNumber?: string;
       serial_number?: string;
@@ -51,21 +75,43 @@ export async function fetchSerialAvailability(serialNumber: string, branchId?: n
       branchId?: number;
       productId?: number;
       product_id?: number;
+      parentId?: number;
+      parent_id?: number;
       qty_onhand?: number;
       [key: string]: unknown;
     }
 
-    const filtered = items.filter((i: SerialOnhandRaw) => {
-      const itemSerial = String(i.serialNumber || i.serial_number || "").trim();
-      const matchSerial = itemSerial === rawSerial;
-      const matchBranch = branchId ? i.branch_id === branchId || i.branchId === branchId : true;
-      return matchSerial && matchBranch;
-    }).map((i: SerialOnhandRaw) => ({
-      ...i,
-      serial_number: i.serialNumber || i.serial_number,
-      branch_id: i.branchId || i.branch_id,
-      product_id: i.productId || i.product_id
-    }));
+    // Handle different shapes returned by Spring Boot (single object, array, or wrapped content/data)
+    let rawItems: SerialOnhandRaw[] = [];
+    if (Array.isArray(data)) {
+      rawItems = data;
+    } else if (data && typeof data === "object") {
+      const jsonObj = data as Record<string, unknown>;
+      if ("productId" in jsonObj || "product_id" in jsonObj || "serialNumber" in jsonObj || "serial_number" in jsonObj) {
+        rawItems = [jsonObj as SerialOnhandRaw];
+      } else if (Array.isArray(jsonObj.content)) {
+        rawItems = jsonObj.content as SerialOnhandRaw[];
+      } else if (Array.isArray(jsonObj.data)) {
+        rawItems = jsonObj.data as SerialOnhandRaw[];
+      }
+    }
+
+    // Filter by branchId if provided, enforcing exact case-sensitive serial comparison
+    const filtered: SerialOnhandRow[] = rawItems
+      .filter((i: SerialOnhandRaw) => {
+        const itemSerial = String(i.serialNumber || i.serial_number || "").trim();
+        const matchSerial = itemSerial === rawSerial;
+        const matchBranch = branchId ? (i.branch_id === branchId || i.branchId === branchId) : true;
+        return matchSerial && matchBranch;
+      })
+      .map((i: SerialOnhandRaw) => ({
+        ...i,
+        serial_number: String(i.serialNumber || i.serial_number || rawSerial).trim(),
+        branch_id: i.branchId || i.branch_id,
+        product_id: i.productId || i.product_id,
+        parent_id: i.parentId || i.parent_id,
+        qty_onhand: i.qty_onhand,
+      }));
 
     return filtered;
   } catch (error) {
@@ -84,16 +130,35 @@ export async function insertSerialTracking(entries: StockTransferSerialRow[]): P
 
 /**
  * Fetches recorded serials for a set of stock transfer IDs.
+ * AG-COMMENT: Solves 422 error by querying both Directus scalar integer and relational object filters,
+ * then normalizing stock_transfer_id to ensure clean matching in receive verification.
  */
 export async function fetchRecordedSerials(transferIds: number[]): Promise<StockTransferSerialRow[]> {
   if (transferIds.length === 0) return [];
 
+  const idList = transferIds.map(Number).filter(Boolean);
+  if (idList.length === 0) return [];
+
   const res = await fetchItems<StockTransferSerialRow>("items/stock_transfer_serial", {
-    "filter[stock_transfer_id][_in]": transferIds.join(","),
+    "filter[_or][0][stock_transfer_id][_in]": idList.join(","),
+    "filter[_or][1][stock_transfer_id][id][_in]": idList.join(","),
+    "fields": "id,stock_transfer_id,serial_number,scan_type,created_at,created_by",
     limit: -1,
   });
   
-  return res.data;
+  const rawRows = res.data || [];
+  return rawRows.map(row => {
+    const rawStId = row.stock_transfer_id as unknown;
+    const normalizedId = typeof rawStId === "object" && rawStId !== null && "id" in rawStId
+      ? Number((rawStId as { id: number }).id)
+      : Number(rawStId);
+
+    return {
+      ...row,
+      stock_transfer_id: normalizedId,
+      serial_number: String(row.serial_number || "").trim(),
+    };
+  });
 }
 
 interface TransferUpdatePayload {

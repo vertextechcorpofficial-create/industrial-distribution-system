@@ -168,9 +168,25 @@ export function useSerializeDispatch() {
         return;
       }
 
+      // AG-COMMENT: Cylinder family matching - matches on exact product_id OR parent_id (e.g. empty cylinder variant vs parent)
       const itemInOrder = selectedGroup.items.find(i => {
-        const pid = (typeof i.product_id === 'object' ? i.product_id.product_id : i.product_id) as number;
-        return pid === match.productId;
+        const product = typeof i.product_id === 'object' ? i.product_id as ProductRow : null;
+        const orderPid = product ? product.product_id : Number(i.product_id);
+        const orderParentId = product && 'parent_id' in product ? Number((product as { parent_id?: number }).parent_id) : null;
+
+        // 1. Direct ID match
+        if (orderPid === match.productId) return true;
+
+        // 2. Parent-to-parent or Parent-to-variant match
+        if (match.parentId) {
+          if (orderPid === match.parentId) return true;
+          if (orderParentId && orderParentId === match.parentId) return true;
+        }
+
+        // 3. Variant-to-parent match
+        if (orderParentId && orderParentId === match.productId) return true;
+
+        return false;
       });
 
       if (!itemInOrder) {

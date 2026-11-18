@@ -8,6 +8,7 @@ import {
     SupplierPerformanceReportPayload,
     AiInsightResponse,
     AiTierSlug,
+    ChatMessage,
 } from '../types';
 
 export async function fetchSupplierPerformanceData(
@@ -34,7 +35,8 @@ export async function fetchSupplierPerformanceData(
 export async function generateGeminiInsights(
     reportData: SupplierPerformanceReportPayload,
     tierSlug: AiTierSlug,
-    userQuery?: string
+    userQuery?: string,
+    chatHistory?: ChatMessage[]
 ): Promise<AiInsightResponse> {
     const res = await fetch('/api/ids/ai-reports/supplier-performance-ai-report/ai-insights', {
         method: 'POST',
@@ -46,6 +48,7 @@ export async function generateGeminiInsights(
             suppliers: reportData.suppliers,
             tierSlug,
             userQuery,
+            chatHistory,
         }),
     });
 
