@@ -1,22 +1,13 @@
-"use client";
-
-import * as React from "react";
+// src/modules/industrial-distribution-system/customer-relationship-management/customer-reports/customer-order-and-consumption-report/hooks/useCustomerOrderConsumptionReport.ts
+// ============================================================
+// Hook to consume the Customer Order & Consumption Report Context.
+// ============================================================
 
 import {
-  CustomerOrderConsumptionReportContext,
+  useCustomerOrderConsumptionReportContext,
   type CustomerOrderConsumptionReportContextValue,
 } from "../providers/CustomerOrderConsumptionReportProvider";
 
-/**
- * Accessor for the report state. Throws when a component is mounted outside
- * the provider, which surfaces wiring mistakes instead of a blank table.
- */
 export function useCustomerOrderConsumptionReport(): CustomerOrderConsumptionReportContextValue {
-  const context = React.useContext(CustomerOrderConsumptionReportContext);
-  if (!context) {
-    throw new Error(
-      "useCustomerOrderConsumptionReport must be used within CustomerOrderConsumptionReportProvider."
-    );
-  }
-  return context;
+  return useCustomerOrderConsumptionReportContext();
 }

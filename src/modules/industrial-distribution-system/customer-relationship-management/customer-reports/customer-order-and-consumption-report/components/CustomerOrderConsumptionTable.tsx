@@ -1,26 +1,28 @@
+// src/modules/industrial-distribution-system/customer-relationship-management/customer-reports/customer-order-and-consumption-report/components/CustomerOrderConsumptionTable.tsx
+// ============================================================
+// Main Report Grid: Customer as the Primary Grouping.
+// Expanding a customer row displays its nested Product Breakdown table.
+// Clicking a product or "View Documents" triggers the supporting documents drawer.
+// Rule Enforcement:
+// - Product display uses products.description
+// - React hook order safety (no hooks after early returns)
+// ============================================================
+
 "use client";
 
-// ============================================================
-// CustomerOrderConsumptionTable.tsx
-// Result grid at the customer x branch x channel x product grain, with a
-// local text filter, column sorting and paging. Selecting a row opens its
-// documents.
-// ============================================================
-
 import * as React from "react";
+import { motion, AnimatePresence } from "framer-motion";
 import {
-  ArrowDown,
-  ArrowUp,
   ArrowUpDown,
+  ChevronDown,
   ChevronLeft,
   ChevronRight,
-  Search,
+  ExternalLink,
+  Layers
 } from "lucide-react";
-
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
-import { Input } from "@/components/ui/input";
 import {
   Select,
   SelectContent,
@@ -36,423 +38,484 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-
 import { useCustomerOrderConsumptionReport } from "../hooks/useCustomerOrderConsumptionReport";
 import {
-  computeReturnRate,
   formatAmount,
   formatKgCompact,
-  formatPercent,
   formatQty,
 } from "../services/customer-order-consumption.helpers";
 import type {
-  ConsumptionChannel,
   CustomerOrderConsumptionRow,
+
 } from "../types/customer-order-consumption.types";
 
 const PAGE_SIZE_OPTIONS = [10, 25, 50, 100];
+const EMPTY_ROWS: CustomerOrderConsumptionRow[] = [];
 
-const CHANNEL_FILTERS: { key: "ALL" | ConsumptionChannel; label: string }[] = [
-  { key: "ALL", label: "All" },
-  { key: "CYLINDER", label: "Cylinder" },
-  { key: "LPG", label: "LPG" },
-];
-
-type ChannelFilter = (typeof CHANNEL_FILTERS)[number]["key"];
-
-// Sorting is local only: the server hands back the whole window already, so
-// re-reading it to change the order would be wasted work.
 type SortKey =
   | "customer"
   | "branch"
-  | "channel"
-  | "product"
-  | "sizeKg"
-  | "events"
-  | "grossQty"
+  | "orders"
+  | "fulfilledQty"
   | "returnedQty"
-  | "grossKg"
-  | "returnedKg"
   | "netKg"
-  | "returnRate"
-  | "netAmount"
-  | "avgKg";
+  | "avgKg"
+  | "amount";
 
-interface ColumnDef {
-  label: string;
-  sortKey?: SortKey;
-  numeric?: boolean;
-  /** Rendered under the label so the unit is never guessed at. */
-  unit?: string;
+function sortRows(
+  rows: CustomerOrderConsumptionRow[],
+  key: SortKey,
+  asc: boolean
+): CustomerOrderConsumptionRow[] {
+  return [...rows].sort((a, b) => {
+    let cmp = 0;
+    if (key === "customer") cmp = a.customerName.localeCompare(b.customerName);
+    else if (key === "branch") cmp = a.branchName.localeCompare(b.branchName);
+    else if (key === "orders") cmp = a.orderFrequency - b.orderFrequency;
+    else if (key === "fulfilledQty") cmp = a.fulfilledQty - b.fulfilledQty;
+    else if (key === "returnedQty") cmp = a.returnedQty - b.returnedQty;
+    else if (key === "netKg") cmp = a.netKg - b.netKg;
+    else if (key === "avgKg") cmp = a.avgOrderSizeKg - b.avgOrderSizeKg;
+    else if (key === "amount") cmp = a.netAmount - b.netAmount;
+    return asc ? cmp : -cmp;
+  });
 }
 
-// "Gas type" is not a column: it is a provisional label derived from the
-// product category, so it sits under the product name where it belongs.
-const COLUMNS: ColumnDef[] = [
-  { label: "Customer", sortKey: "customer" },
-  { label: "Branch", sortKey: "branch" },
-  { label: "Channel", sortKey: "channel" },
-  { label: "Product", sortKey: "product" },
-  { label: "Size", sortKey: "sizeKg", numeric: true, unit: "kg" },
-  { label: "Events", sortKey: "events", numeric: true, unit: "orders" },
-  { label: "Gross", sortKey: "grossQty", numeric: true, unit: "pieces" },
-  { label: "Returned", sortKey: "returnedQty", numeric: true, unit: "pieces" },
-  { label: "Gross", sortKey: "grossKg", numeric: true, unit: "kg" },
-  { label: "Returned", sortKey: "returnedKg", numeric: true, unit: "kg" },
-  { label: "Net", sortKey: "netKg", numeric: true, unit: "kg" },
-  { label: "Return rate", sortKey: "returnRate", numeric: true, unit: "%" },
-  { label: "Net amount", sortKey: "netAmount", numeric: true, unit: "PHP" },
-  { label: "Avg net", sortKey: "avgKg", numeric: true, unit: "kg / event" },
-];
+function matchesSearch(row: CustomerOrderConsumptionRow, query: string): boolean {
+  if (!query) return true;
+  const q = query.toLowerCase();
+  const directMatch =
+    row.customerName.toLowerCase().includes(q) ||
+    row.customerCode.toLowerCase().includes(q) ||
+    row.storeName.toLowerCase().includes(q) ||
+    row.branchName.toLowerCase().includes(q);
 
-// null means "not known" (a product with no weight, an unassigned gas type)
-// and is always pushed to the end whichever way the column is sorted.
-type SortValue = string | number | null;
+  if (directMatch) return true;
 
-const ACCESSORS: Record<SortKey, (row: CustomerOrderConsumptionRow) => SortValue> = {
-  customer: (row) => row.customerName.toLowerCase(),
-  branch: (row) => row.branchName.toLowerCase(),
-  channel: (row) => row.channel.toLowerCase(),
-  product: (row) => row.productName.toLowerCase(),
-  sizeKg: (row) => row.sizeKg,
-  events: (row) => row.orderCount,
-  grossQty: (row) => row.grossQty,
-  returnedQty: (row) => row.returnedQty,
-  grossKg: (row) => row.grossKg,
-  returnedKg: (row) => row.returnedKg,
-  netKg: (row) => row.netKg,
-  returnRate: (row) => computeReturnRate(row.returnedKg, row.grossKg),
-  netAmount: (row) => row.netAmount,
-  avgKg: (row) => row.avgOrderSizeKg,
-};
-
-/** Local, case-insensitive match across the identifying columns. */
-function matches(row: CustomerOrderConsumptionRow, term: string): boolean {
-  if (!term) return true;
-  const haystack = [
-    row.customerCode,
-    row.customerName,
-    row.storeName,
-    row.branchName,
-    row.productCode,
-    row.productName,
-    row.gasType ?? "",
-    row.channel,
-  ]
-    .join(" ")
-    .toLowerCase();
-  return haystack.includes(term.toLowerCase());
-}
-
-function compareValues(a: SortValue, b: SortValue): number {
-  if (a === b) return 0;
-  if (a === null) return 1;
-  if (b === null) return -1;
-  if (typeof a === "number" && typeof b === "number") return a - b;
-  return String(a).localeCompare(String(b));
-}
-
-function ChannelBadge({ row }: { row: CustomerOrderConsumptionRow }) {
-  return (
-    <div className="flex flex-col gap-1">
-      <Badge variant={row.channel === "LPG" ? "secondary" : "outline"}>
-        {row.channel === "LPG" ? "LPG" : "Cylinder"}
-      </Badge>
-      {/* States the basis of the kg on the same line it is read. */}
-      <span className="text-[10px] text-muted-foreground">
-        {row.kgIsProxy ? "kg proxy" : "kg measured"}
-        {row.billingMode ? ` · ${row.billingMode}` : ""}
-      </span>
-    </div>
+  // Search inside nested products
+  return row.products.some(
+    (p) =>
+      p.productName.toLowerCase().includes(q) ||
+      p.productCode.toLowerCase().includes(q) ||
+      (p.gasType && p.gasType.toLowerCase().includes(q))
   );
 }
 
-export function CustomerOrderConsumptionTable(): React.ReactElement | null {
-  const { report, openCustomerDetail } = useCustomerOrderConsumptionReport();
-  const [term, setTerm] = React.useState("");
-  const [page, setPage] = React.useState(0);
-  const [pageSize, setPageSize] = React.useState(25);
-  const [channelFilter, setChannelFilter] = React.useState<ChannelFilter>("ALL");
-  const [sort, setSort] = React.useState<{ key: SortKey; dir: "asc" | "desc" } | null>(
-    null
-  );
+export function CustomerOrderConsumptionTable(): React.ReactElement {
+  const { report, openDrillDown } = useCustomerOrderConsumptionReport();
 
-  // Slicing by channel here re-uses the rows already on screen instead of
-  // re-querying the server for what the row badge can answer.
-  const channelCounts = React.useMemo(() => {
-    const counts: Record<ChannelFilter, number> = { ALL: 0, CYLINDER: 0, LPG: 0 };
-    for (const row of report?.rows ?? []) {
-      counts.ALL += 1;
-      counts[row.channel] += 1;
-    }
-    return counts;
-  }, [report]);
+  const [expandedCustomers, setExpandedCustomers] = React.useState<Set<string>>(new Set());
+  const [sortKey, setSortKey] = React.useState<SortKey>("netKg");
+  const [sortAsc, setSortAsc] = React.useState<boolean>(false);
+  const [page, setPage] = React.useState<number>(0);
+  const [pageSize, setPageSize] = React.useState<number>(25);
 
-  const rows = React.useMemo(() => {
-    if (!report) return [];
-    const filtered = report.rows.filter(
-      (row) =>
-        (channelFilter === "ALL" || row.channel === channelFilter) &&
-        matches(row, term)
-    );
-    if (!sort) return filtered;
-    const read = ACCESSORS[sort.key];
-    const factor = sort.dir === "asc" ? 1 : -1;
-    // Array#sort is stable, so unsorted ties keep the server's
-    // customer -> branch -> channel -> kg order.
-    return [...filtered].sort((a, b) => factor * compareValues(read(a), read(b)));
-  }, [report, term, sort, channelFilter]);
-
-  const pageCount = Math.max(Math.ceil(rows.length / pageSize), 1);
-  const safePage = Math.min(page, pageCount - 1);
-  const visible = rows.slice(safePage * pageSize, safePage * pageSize + pageSize);
-
-  React.useEffect(() => {
-    setPage(0);
-  }, [term, report, sort, channelFilter, pageSize]);
-
-  if (!report) return null;
-
-  const toggleSort = (key: SortKey, numeric: boolean | undefined): void => {
-    setSort((current) => {
-      if (current?.key === key) {
-        // Two states are enough: cycling through "unsorted" would leave the
-        // reader guessing which of the three they were looking at.
-        return { key, dir: current.dir === "desc" ? "asc" : "desc" };
-      }
-      return { key, dir: numeric ? "desc" : "asc" };
+  const toggleExpand = React.useCallback((customerKey: string) => {
+    setExpandedCustomers((prev) => {
+      const next = new Set(prev);
+      if (next.has(customerKey)) next.delete(customerKey);
+      else next.add(customerKey);
+      return next;
     });
-  };
+  }, []);
+
+  const handleSort = React.useCallback(
+    (key: SortKey) => {
+      if (sortKey === key) {
+        setSortAsc((prev) => !prev);
+      } else {
+        setSortKey(key);
+        setSortAsc(false);
+      }
+    },
+    [sortKey]
+  );
+
+  const rawRows = report?.rows ?? EMPTY_ROWS;
+  const searchQuery = report?.filters?.search ?? "";
+
+  // Filter & Sort rows unconditionally before render
+  const filteredRows = React.useMemo(() => {
+    return rawRows.filter((r) => matchesSearch(r, searchQuery));
+  }, [rawRows, searchQuery]);
+
+  const sortedRows = React.useMemo(() => {
+    return sortRows(filteredRows, sortKey, sortAsc);
+  }, [filteredRows, sortKey, sortAsc]);
+
+  const pageCount = Math.max(1, Math.ceil(sortedRows.length / pageSize));
+  const safePage = Math.min(page, pageCount - 1);
+  const paginatedRows = React.useMemo(() => {
+    const start = safePage * pageSize;
+    return sortedRows.slice(start, start + pageSize);
+  }, [sortedRows, safePage, pageSize]);
 
   return (
-    <Card className="gap-3 border-border/80 py-4">
-      <CardContent className="space-y-3 px-4">
-        <div className="flex flex-wrap items-center justify-between gap-2">
-          <div className="flex items-center gap-2">
-            <h2 className="text-sm font-semibold uppercase tracking-wider">
-              Customer × branch × channel × product
-            </h2>
-            <span className="text-xs text-muted-foreground">
-              {formatQty(rows.length)} row{rows.length === 1 ? "" : "s"}
-              {term ? " matching" : ""}
-            </span>
-          </div>
-          <div className="flex flex-wrap items-center gap-2">
-            <div
-              role="group"
-              aria-label="Filter rows by channel"
-              className="flex items-center gap-0.5 rounded-lg bg-muted p-0.5"
-            >
-              {CHANNEL_FILTERS.map(({ key, label }) => (
-                <Button
-                  key={key}
-                  type="button"
-                  size="sm"
-                  variant={channelFilter === key ? "secondary" : "ghost"}
-                  className="h-7 gap-1.5 px-2.5 text-xs"
-                  aria-pressed={channelFilter === key}
-                  onClick={() => setChannelFilter(key)}
+    <Card className="shadow-none border bg-card py-0">
+      <CardContent className="p-0">
+        <div className="overflow-x-auto">
+          <Table>
+            <TableHeader className="bg-muted/40">
+              <TableRow>
+                <TableHead className="w-9 px-2 text-center" />
+                <TableHead
+                  onClick={() => handleSort("customer")}
+                  className="cursor-pointer select-none text-xs font-semibold"
                 >
-                  {label}
-                  <span className="text-[10px] tabular-nums text-muted-foreground">
-                    {formatQty(channelCounts[key])}
-                  </span>
-                </Button>
-              ))}
-            </div>
-            <div className="relative">
-              <Search
-                aria-hidden="true"
-                className="pointer-events-none absolute left-2.5 top-1/2 size-4 -translate-y-1/2 text-muted-foreground"
-              />
-              <Input
-                value={term}
-                onChange={(event) => setTerm(event.target.value)}
-                placeholder="Filter customers, products, branches"
-                aria-label="Filter rows"
-                className="w-full pl-8 sm:w-72"
-              />
-            </div>
-          </div>
-        </div>
-
-        <div className="rounded-md border border-border/70 [&>div]:max-h-[70vh] [&>div]:overflow-auto">
-          <Table className="min-w-[1480px]">
-            <TableHeader>
-              <TableRow className="hover:bg-transparent">
-                {COLUMNS.map((column, index) => {
-                  const sortKey = column.sortKey;
-                  const activeDir =
-                    sort && sort.key === sortKey ? sort.dir : null;
-                  const pinned = index === 0;
-                  return (
-                    <TableHead
-                      key={`${column.label}-${column.unit ?? ""}`}
-                      aria-sort={
-                        activeDir
-                          ? activeDir === "asc"
-                            ? "ascending"
-                            : "descending"
-                          : undefined
-                      }
-                      className={`sticky top-0 z-20 h-11 whitespace-nowrap bg-card px-0 ${
-                        pinned ? "left-0 z-30 border-r border-border/60" : ""
-                      } ${column.numeric ? "text-right" : ""}`}
-                    >
-                      {sortKey ? (
-                        <Button
-                          type="button"
-                          variant="ghost"
-                          size="sm"
-                          onClick={() => toggleSort(sortKey, column.numeric)}
-                          className={`h-full w-full justify-between gap-1.5 rounded-none px-2 text-xs font-semibold ${
-                            activeDir ? "text-foreground" : "text-muted-foreground"
-                          }`}
-                        >
-                          <span
-                            className={`flex flex-col leading-tight ${
-                              column.numeric ? "items-end" : "items-start"
-                            }`}
-                          >
-                            {column.label}
-                            {column.unit ? (
-                              <span className="text-[10px] font-normal text-muted-foreground">
-                                {column.unit}
-                              </span>
-                            ) : null}
-                          </span>
-                          {activeDir === "asc" ? (
-                            <ArrowUp aria-hidden="true" className="size-3 shrink-0" />
-                          ) : activeDir === "desc" ? (
-                            <ArrowDown aria-hidden="true" className="size-3 shrink-0" />
-                          ) : (
-                            <ArrowUpDown aria-hidden="true" className="size-3 shrink-0 opacity-40" />
-                          )}
-                        </Button>
-                      ) : (
-                        <span className="px-2 text-xs font-semibold text-muted-foreground">
-                          {column.label}
-                        </span>
-                      )}
-                    </TableHead>
-                  );
-                })}
+                  <div className="flex items-center gap-1">
+                    Customer Details
+                    <ArrowUpDown className="size-3 text-muted-foreground" />
+                  </div>
+                </TableHead>
+                <TableHead
+                  onClick={() => handleSort("branch")}
+                  className="cursor-pointer select-none text-xs font-semibold"
+                >
+                  <div className="flex items-center gap-1">
+                    Branch
+                    <ArrowUpDown className="size-3 text-muted-foreground" />
+                  </div>
+                </TableHead>
+                <TableHead
+                  onClick={() => handleSort("orders")}
+                  className="cursor-pointer select-none text-xs font-semibold text-right"
+                >
+                  <div className="flex items-center justify-end gap-1">
+                    Orders
+                    <ArrowUpDown className="size-3 text-muted-foreground" />
+                  </div>
+                </TableHead>
+                <TableHead
+                  onClick={() => handleSort("fulfilledQty")}
+                  className="cursor-pointer select-none text-xs font-semibold text-right"
+                >
+                  <div className="flex items-center justify-end gap-1">
+                    Fulfilled (pcs)
+                    <ArrowUpDown className="size-3 text-muted-foreground" />
+                  </div>
+                </TableHead>
+                <TableHead
+                  onClick={() => handleSort("returnedQty")}
+                  className="cursor-pointer select-none text-xs font-semibold text-right"
+                >
+                  <div className="flex items-center justify-end gap-1">
+                    Returned (pcs)
+                    <ArrowUpDown className="size-3 text-muted-foreground" />
+                  </div>
+                </TableHead>
+                <TableHead
+                  onClick={() => handleSort("netKg")}
+                  className="cursor-pointer select-none text-xs font-semibold text-right"
+                >
+                  <div className="flex items-center justify-end gap-1">
+                    Net Purchased Kg
+                    <ArrowUpDown className="size-3 text-muted-foreground" />
+                  </div>
+                </TableHead>
+                <TableHead
+                  onClick={() => handleSort("avgKg")}
+                  className="cursor-pointer select-none text-xs font-semibold text-right"
+                >
+                  <div className="flex items-center justify-end gap-1">
+                    Avg Order (kg)
+                    <ArrowUpDown className="size-3 text-muted-foreground" />
+                  </div>
+                </TableHead>
+                <TableHead
+                  onClick={() => handleSort("amount")}
+                  className="cursor-pointer select-none text-xs font-semibold text-right"
+                >
+                  <div className="flex items-center justify-end gap-1">
+                    Net Revenue
+                    <ArrowUpDown className="size-3 text-muted-foreground" />
+                  </div>
+                </TableHead>
+                <TableHead className="w-24 text-center text-xs font-semibold">Action</TableHead>
               </TableRow>
             </TableHeader>
+
             <TableBody>
-              {visible.length === 0 ? (
+              {paginatedRows.length === 0 ? (
                 <TableRow>
-                  <TableCell
-                    colSpan={COLUMNS.length}
-                    className="py-8 text-center text-sm text-muted-foreground"
-                  >
-                    {term ? (
-                      <span className="inline-flex flex-wrap items-center justify-center gap-2">
-                        Nothing matches &ldquo;{term}&rdquo;.
-                        <Button type="button" variant="outline" size="sm" onClick={() => setTerm("")}>
-                          Clear filter
-                        </Button>
-                      </span>
-                    ) : (
-                      "No customer demand in this window."
-                    )}
+                  <TableCell colSpan={10} className="py-8 text-center text-xs text-muted-foreground">
+                    No customers match the active filters or search terms.
                   </TableCell>
                 </TableRow>
               ) : (
-                visible.map((row) => (
-                  <TableRow
-                    // AG-COMMENT: Include siteId in key to prevent multi-site collision
-                    key={`${row.customerCode}|${row.branchId}|${row.channel}|${row.productId}|${row.siteId ?? 0}`}
-                    className="group cursor-pointer focus-visible:bg-muted/60"
-                    tabIndex={0}
-                    aria-label={`Open supporting documents for ${row.customerName}`}
-                    // The row is the only way into the supporting documents,
-                    // so it needs keyboard access as well as a click.
-                    onClick={() =>
-                      void openCustomerDetail({
-                        customerCode: row.customerCode,
-                        customerName: row.customerName,
-                      })
-                    }
-                    onKeyDown={(event) => {
-                      if (event.key !== "Enter" && event.key !== " ") return;
-                      event.preventDefault();
-                      void openCustomerDetail({
-                        customerCode: row.customerCode,
-                        customerName: row.customerName,
-                      });
-                    }}
-                  >
-                    <TableCell className="sticky left-0 z-10 max-w-[240px] border-r border-border/60 bg-card group-focus-visible:bg-muted/60">
-                      <p className="truncate font-medium">{row.customerName}</p>
-                      <p className="truncate text-xs text-muted-foreground">
-                        {row.customerCode}
-                        {row.storeName ? ` · ${row.storeName}` : ""}
-                      </p>
-                    </TableCell>
-                    <TableCell className="whitespace-nowrap">{row.branchName}</TableCell>
-                    <TableCell>
-                      <ChannelBadge row={row} />
-                    </TableCell>
-                    <TableCell className="max-w-[220px]">
-                      <p className="truncate">{row.productName}</p>
-                      <p className="truncate text-xs text-muted-foreground">
-                        {row.siteName ? `${row.siteName} · ` : ""}
-                        {row.productCode}
-                        {row.gasType ? ` · ${row.gasType}` : ""}
-                      </p>
-                    </TableCell>
-                    <TableCell className="text-right tabular-nums">
-                      {row.sizeKg == null ? "—" : formatKgCompact(row.sizeKg)}
-                    </TableCell>
-                    <TableCell className="text-right tabular-nums">{row.orderCount}</TableCell>
-                    <TableCell className="text-right tabular-nums">{formatQty(row.grossQty)}</TableCell>
-                    <TableCell className="text-right tabular-nums">
-                      {row.returnedQty === 0 ? "—" : formatQty(row.returnedQty)}
-                    </TableCell>
-                    <TableCell className="text-right tabular-nums">
-                      {formatKgCompact(row.grossKg)}
-                    </TableCell>
-                    <TableCell className="text-right tabular-nums">
-                      {row.returnedKg === 0 ? "—" : formatKgCompact(row.returnedKg)}
-                    </TableCell>
-                    <TableCell
-                      className={`text-right font-medium tabular-nums ${
-                        row.netKg < 0 ? "text-destructive" : ""
-                      }`}
-                    >
-                      {formatKgCompact(row.netKg)}
-                    </TableCell>
-                    <TableCell className="text-right tabular-nums">
-                      {formatPercent(computeReturnRate(row.returnedKg, row.grossKg))}
-                    </TableCell>
-                    <TableCell className="text-right tabular-nums">
-                      {formatAmount(row.netAmount)}
-                    </TableCell>
-                    <TableCell className="text-right tabular-nums">
-                      {row.orderCount === 0 ? "—" : formatKgCompact(row.avgOrderSizeKg)}
-                    </TableCell>
-                  </TableRow>
-                ))
+                paginatedRows.map((customer) => {
+                  const isExpanded = expandedCustomers.has(customer.rowKey);
+                  return (
+                    <React.Fragment key={customer.rowKey}>
+                      {/* Customer Parent Row */}
+                      <TableRow
+                        className={`hover:bg-muted/30 cursor-pointer transition-colors ${
+                          isExpanded ? "bg-muted/20 font-medium" : ""
+                        }`}
+                        onClick={() => toggleExpand(customer.rowKey)}
+                      >
+                        <TableCell className="px-2 text-center">
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            size="icon"
+                            className="size-6 p-0 text-muted-foreground hover:text-foreground"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              toggleExpand(customer.rowKey);
+                            }}
+                          >
+                            <ChevronDown
+                              className={`size-3.5 transition-transform duration-200 ${
+                                isExpanded ? "rotate-180" : ""
+                              }`}
+                            />
+                          </Button>
+                        </TableCell>
+
+                        <TableCell className="max-w-[260px]">
+                          <div className="space-y-0.5">
+                            <div className="font-semibold text-xs truncate text-foreground">
+                              {customer.customerName}
+                            </div>
+                            <div className="text-[11px] text-muted-foreground truncate flex items-center gap-1.5">
+                              <span>{customer.customerCode}</span>
+                              {customer.storeName ? (
+                                <>
+                                  <span>·</span>
+                                  <span>{customer.storeName}</span>
+                                </>
+                              ) : null}
+                              <Badge variant="outline" className="text-[9px] px-1 py-0 h-4">
+                                {customer.classificationName}
+                              </Badge>
+                            </div>
+                          </div>
+                        </TableCell>
+
+                        <TableCell className="text-xs text-muted-foreground whitespace-nowrap">
+                          {customer.branchName}
+                        </TableCell>
+
+                        <TableCell className="text-right text-xs tabular-nums font-semibold">
+                          {formatQty(customer.orderFrequency)}
+                        </TableCell>
+
+                        <TableCell className="text-right text-xs tabular-nums">
+                          {formatQty(customer.fulfilledQty)}
+                        </TableCell>
+
+                        <TableCell className="text-right text-xs tabular-nums">
+                          {customer.returnedQty > 0 ? (
+                            <span className="text-rose-600 font-medium">
+                              {formatQty(customer.returnedQty)}
+                            </span>
+                          ) : (
+                            "—"
+                          )}
+                        </TableCell>
+
+                        <TableCell className="text-right text-xs tabular-nums font-bold text-foreground">
+                          {formatKgCompact(customer.netKg)}
+                        </TableCell>
+
+                        <TableCell className="text-right text-xs tabular-nums text-muted-foreground">
+                          {formatKgCompact(customer.avgOrderSizeKg)}
+                        </TableCell>
+
+                        <TableCell className="text-right text-xs tabular-nums font-medium">
+                          {formatAmount(customer.netAmount)}
+                        </TableCell>
+
+                        <TableCell className="text-center px-2">
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            size="sm"
+                            className="h-7 text-xs px-2 gap-1 text-primary hover:text-primary"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              openDrillDown({
+                                customerCode: customer.customerCode,
+                                customerName: customer.customerName,
+                              });
+                            }}
+                          >
+                            <ExternalLink className="size-3" />
+                            Drill Down
+                          </Button>
+                        </TableCell>
+                      </TableRow>
+
+                      {/* Nested Products Breakdown Row with smooth motion animation */}
+                      <AnimatePresence initial={false}>
+                        {isExpanded && (
+                          <TableRow className="bg-muted/10 hover:bg-muted/10 border-b border-border/50">
+                            <TableCell colSpan={10} className="p-0 overflow-hidden">
+                              <motion.div
+                                initial={{ opacity: 0, height: 0 }}
+                                animate={{ opacity: 1, height: "auto" }}
+                                exit={{ opacity: 0, height: 0 }}
+                                transition={{ duration: 0.26, ease: [0.16, 1, 0.3, 1] }}
+                                className="p-3 pl-10"
+                              >
+                                <div className="rounded-md border bg-background p-3 shadow-xs space-y-2.5">
+                                  <div className="flex items-center justify-between">
+                                    <div className="flex items-center gap-1.5 text-xs font-semibold text-foreground">
+                                      <Layers className="size-3.5 text-primary" />
+                                      Product Movement Breakdown for {customer.customerName}
+                                    </div>
+                                    <span className="text-[11px] text-muted-foreground">
+                                      {customer.products.length} product line(s) purchased
+                                    </span>
+                                  </div>
+
+                                  <Table>
+                                    <TableHeader className="bg-muted/30">
+                                      <TableRow className="h-7">
+                                        <TableHead className="text-[11px] font-semibold py-1">
+                                          Product Name (Description)
+                                        </TableHead>
+                                        <TableHead className="text-[11px] font-semibold py-1">
+                                          Code
+                                        </TableHead>
+                                        <TableHead className="text-[11px] font-semibold py-1">
+                                          Cylinder Size
+                                        </TableHead>
+                                        <TableHead className="text-[11px] font-semibold py-1">
+                                          Gas Type
+                                        </TableHead>
+                                        <TableHead className="text-[11px] font-semibold text-right py-1">
+                                          Orders
+                                        </TableHead>
+                                        <TableHead className="text-[11px] font-semibold text-right py-1">
+                                          Fulfilled (pcs)
+                                        </TableHead>
+                                        <TableHead className="text-[11px] font-semibold text-right py-1">
+                                          Returned (pcs)
+                                        </TableHead>
+                                        <TableHead className="text-[11px] font-semibold text-right py-1">
+                                          Net Purchased Kg
+                                        </TableHead>
+                                        <TableHead className="text-[11px] font-semibold text-right py-1">
+                                          Avg Order (kg)
+                                        </TableHead>
+                                        <TableHead className="text-[11px] font-semibold text-center py-1">
+                                          Supporting Records
+                                        </TableHead>
+                                      </TableRow>
+                                    </TableHeader>
+
+                                    <TableBody>
+                                      {customer.products.map((p, pIndex) => (
+                                        <motion.tr
+                                          key={p.productId}
+                                          initial={{ opacity: 0, x: -4 }}
+                                          animate={{ opacity: 1, x: 0 }}
+                                          transition={{ duration: 0.16, delay: pIndex * 0.02, ease: "easeOut" }}
+                                          className="h-8 hover:bg-muted/40 cursor-pointer border-b border-border/40 transition-colors"
+                                          onClick={(e) => {
+                                            e.stopPropagation();
+                                            openDrillDown({
+                                              customerCode: customer.customerCode,
+                                              customerName: customer.customerName,
+                                              productId: p.productId,
+                                              productName: p.productName,
+                                            });
+                                          }}
+                                        >
+                                          <TableCell className="text-xs font-medium py-1.5 max-w-[200px] truncate">
+                                            {/* Shows products.description as product name per ids-guide */}
+                                            {p.productName}
+                                          </TableCell>
+                                          <TableCell className="text-[11px] text-muted-foreground py-1.5">
+                                            {p.productCode}
+                                          </TableCell>
+                                          <TableCell className="text-xs py-1.5">
+                                            {p.cylinderSizeKg ? (
+                                              <Badge variant="secondary" className="text-[10px] font-mono">
+                                                {p.cylinderSizeKg} kg
+                                              </Badge>
+                                            ) : (
+                                              <span className="text-muted-foreground text-[11px]">—</span>
+                                            )}
+                                          </TableCell>
+                                          <TableCell className="text-xs text-muted-foreground py-1.5">
+                                            {p.gasType}
+                                          </TableCell>
+                                          <TableCell className="text-right text-xs tabular-nums py-1.5 font-medium">
+                                            {p.orderFrequency}
+                                          </TableCell>
+                                          <TableCell className="text-right text-xs tabular-nums py-1.5">
+                                            {formatQty(p.fulfilledQty)}
+                                          </TableCell>
+                                          <TableCell className="text-right text-xs tabular-nums py-1.5">
+                                            {p.returnedQty > 0 ? (
+                                              <span className="text-rose-600 font-medium">
+                                                {formatQty(p.returnedQty)}
+                                              </span>
+                                            ) : (
+                                              "—"
+                                            )}
+                                          </TableCell>
+                                          <TableCell className="text-right text-xs tabular-nums font-bold py-1.5">
+                                            {formatKgCompact(p.netKg)}
+                                          </TableCell>
+                                          <TableCell className="text-right text-xs tabular-nums text-muted-foreground py-1.5">
+                                            {formatKgCompact(p.avgOrderSizeKg)}
+                                          </TableCell>
+                                          <TableCell className="text-center py-1.5">
+                                            <Button
+                                              type="button"
+                                              variant="ghost"
+                                              size="sm"
+                                              className="h-6 text-[11px] px-2 text-primary hover:text-primary gap-1"
+                                              onClick={(e) => {
+                                                e.stopPropagation();
+                                                openDrillDown({
+                                                  customerCode: customer.customerCode,
+                                                  customerName: customer.customerName,
+                                                  productId: p.productId,
+                                                  productName: p.productName,
+                                                });
+                                              }}
+                                            >
+                                              View Documents
+                                            </Button>
+                                          </TableCell>
+                                        </motion.tr>
+                                      ))}
+                                    </TableBody>
+                                  </Table>
+                                </div>
+                              </motion.div>
+                            </TableCell>
+                          </TableRow>
+                        )}
+                      </AnimatePresence>
+                    </React.Fragment>
+                  );
+                })
               )}
             </TableBody>
           </Table>
         </div>
 
-        <div className="flex flex-wrap items-center justify-between gap-2">
+        {/* Pagination Bar */}
+        <div className="flex flex-wrap items-center justify-between gap-2 p-3 border-t bg-muted/10">
           <p className="text-xs text-muted-foreground">
-            Page {safePage + 1} of {pageCount} · the customer column and the
-            headings stay pinned while you scroll sideways · click a row for its
-            supporting documents
+            Showing {paginatedRows.length} of {sortedRows.length} customers · Click a row to expand products
           </p>
-          <div className="flex flex-wrap items-center gap-4">
-            <div className="flex items-center gap-2">
+          <div className="flex items-center gap-4">
+            <div className="flex items-center gap-1.5">
               <span className="text-xs text-muted-foreground">Rows per page</span>
               <Select
                 value={String(pageSize)}
-                onValueChange={(next) => setPageSize(Number(next))}
+                onValueChange={(val) => {
+                  setPageSize(Number(val));
+                  setPage(0);
+                }}
               >
-                <SelectTrigger className="h-8 w-[72px]" aria-label="Rows per page">
+                <SelectTrigger className="h-7 w-16 text-xs">
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
@@ -464,28 +527,28 @@ export function CustomerOrderConsumptionTable(): React.ReactElement | null {
                 </SelectContent>
               </Select>
             </div>
-            <div className="flex gap-2">
+
+            <div className="flex items-center gap-1">
               <Button
-                type="button"
                 variant="outline"
                 size="sm"
-                onClick={() => setPage((current) => Math.max(current - 1, 0))}
+                onClick={() => setPage((p) => Math.max(0, p - 1))}
                 disabled={safePage === 0}
-                className="gap-1"
+                className="h-7 px-2 text-xs"
               >
-                <ChevronLeft aria-hidden="true" className="size-4" />
-                Previous
+                <ChevronLeft className="size-3.5" />
               </Button>
+              <span className="text-xs px-2 text-muted-foreground">
+                Page {safePage + 1} of {pageCount}
+              </span>
               <Button
-                type="button"
                 variant="outline"
                 size="sm"
-                onClick={() => setPage((current) => Math.min(current + 1, pageCount - 1))}
+                onClick={() => setPage((p) => Math.min(pageCount - 1, p + 1))}
                 disabled={safePage >= pageCount - 1}
-                className="gap-1"
+                className="h-7 px-2 text-xs"
               >
-                Next
-                <ChevronRight aria-hidden="true" className="size-4" />
+                <ChevronRight className="size-3.5" />
               </Button>
             </div>
           </div>

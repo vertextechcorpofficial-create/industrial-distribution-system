@@ -1,325 +1,120 @@
+// src/modules/industrial-distribution-system/customer-relationship-management/customer-reports/customer-order-and-consumption-report/services/customer-order-consumption.export-model.ts
 // ============================================================
-// customer-order-consumption.export-model.ts
-// Turns the report envelope into neutral title/columns/rows sections that
-// both the xlsx and the pdf writers consume, so the two files can never
-// disagree about a number.
+// Model formatting for Excel (.xlsx) and PDF report generation.
+// No LaTeX used.
 // ============================================================
 
 import type {
-  AppliedFilterContext,
-  ChannelTotals,
-  CustomerOrderConsumptionOverview,
-  CustomerOrderConsumptionReportResponse,
+
   CustomerOrderConsumptionRow,
-  MonthlyTrendPoint,
+
   ReportException,
 } from "../types/customer-order-consumption.types";
-import {
-  computeReturnRate,
-  formatKgExact,
-  formatPercent,
-  formatReportDate,
-  formatYearMonth,
-} from "./customer-order-consumption.helpers";
 
-export type ReportExportCell = string | number;
-
-export interface ReportExportSection {
-  title: string;
-  columns: string[];
-  rows: ReportExportCell[][];
+export interface FlatCustomerExportRow {
+  "Customer Code": string;
+  "Customer Name": string;
+  "Store Name": string;
+  "Branch": string;
+  "Classification": string;
+  "Order Frequency": number;
+  "Fulfilled Pieces": number;
+  "Returned Pieces": number;
+  "Net Pieces": number;
+  "Gross Kg": number;
+  "Returned Kg": number;
+  "Net Purchased Kg": number;
+  "Avg Order Size Kg": number;
+  "Net Revenue (PHP)": number;
 }
 
-export interface ReportExportFilterContextItem {
-  label: string;
-  value: string;
+export interface FlatProductExportRow {
+  "Customer Code": string;
+  "Customer Name": string;
+  "Product Name": string;
+  "Product Code": string;
+  "Cylinder Size (Kg)": string;
+  "Gas Type": string;
+  "Channel": string;
+  "Order Frequency": number;
+  "Fulfilled Pieces": number;
+  "Returned Pieces": number;
+  "Net Pieces": number;
+  "Gross Kg": number;
+  "Returned Kg": number;
+  "Net Purchased Kg": number;
+  "Avg Order Size Kg": number;
+  "Net Revenue (PHP)": number;
 }
 
-const CHANNEL_LABEL: Record<string, string> = {
-  CYLINDER: "Cylinder / bulk purchase",
-  LPG: "Metered & weighed LPG",
-};
-
-/**
- * A multi-select reads as a list in an export. Nothing picked is reported as
- * the whole population, because that is what the run actually covered.
- */
-function selectionText(
-  labels: string[] | undefined,
-  values: readonly (string | number)[] | undefined,
-  allLabel: string
-): string {
-  if (!values || values.length === 0) return allLabel;
-  const readable = labels && labels.length === values.length ? labels : values.map(String);
-  if (readable.length === 1) return readable[0];
-  return `${readable.length} selected: ${readable.join(", ")}`;
+export interface FlatExceptionExportRow {
+  "Exception Code": string;
+  "Channel": string;
+  "Customer Code": string;
+  "Customer Name": string;
+  "Reference Type": string;
+  "Reference No": string;
+  "Detail": string;
+  "Quantity": number;
+  "Kg": number;
 }
 
-/**
- * The applied filters are echoed into every export so a printed page stays
- * interpretable months later, when nobody remembers the window used.
- */
-export function buildReportFilterContext(
-  filters: AppliedFilterContext
-): ReportExportFilterContextItem[] {
-  return [
-    { label: "Period", value: `${filters.startDate} to ${filters.endDate}` },
-    {
-      label: "Branch",
-      value: selectionText(filters.branchLabels, filters.branchIds, "All branches"),
-    },
-    {
-      label: "Customer",
-      value: selectionText(filters.customerLabels, filters.customerCodes, "All customers"),
-    },
-    {
-      label: "Salesman",
-      value: selectionText(filters.salesmanLabels, filters.salesmanIds, "All salesmen"),
-    },
-    {
-      label: "Classification",
-      value: selectionText(
-        filters.classificationLabels,
-        filters.classificationIds,
-        "All classifications"
-      ),
-    },
-    {
-      label: "Channel",
-      value: filters.channel ? CHANNEL_LABEL[filters.channel] : "Cylinder and LPG, kept separate",
-    },
-  ];
+export function flattenCustomersForExport(rows: CustomerOrderConsumptionRow[]): FlatCustomerExportRow[] {
+  return rows.map((r) => ({
+    "Customer Code": r.customerCode,
+    "Customer Name": r.customerName,
+    "Store Name": r.storeName,
+    "Branch": r.branchName,
+    "Classification": r.classificationName,
+    "Order Frequency": r.orderFrequency,
+    "Fulfilled Pieces": r.fulfilledQty,
+    "Returned Pieces": r.returnedQty,
+    "Net Pieces": r.netQty,
+    "Gross Kg": Math.round(r.grossKg * 100) / 100,
+    "Returned Kg": Math.round(r.returnedKg * 100) / 100,
+    "Net Purchased Kg": Math.round(r.netKg * 100) / 100,
+    "Avg Order Size Kg": r.avgOrderSizeKg,
+    "Net Revenue (PHP)": Math.round(r.netAmount * 100) / 100,
+  }));
 }
 
-function overviewSection(
-  overview: CustomerOrderConsumptionOverview
-): ReportExportSection {
-  const metric = (
-    label: string,
-    read: (totals: ChannelTotals) => ReportExportCell
-  ): ReportExportCell[] => [label, read(overview.cylinder), read(overview.lpg)];
-
-  return {
-    title: "Overview",
-    // Two columns, never a combined one: cylinder kg is a purchase proxy and
-    // LPG kg is measured usage.
-    columns: [
-      "Metric",
-      "Cylinder / bulk purchase",
-      "Metered & weighed LPG",
-    ],
-    rows: [
-      metric("Customers", (totals) => totals.customers),
-      metric("Purchase / billing events", (totals) => totals.orders),
-      metric("Gross quantity", (totals) => totals.grossQty),
-      metric("Returned quantity", (totals) => totals.returnedQty),
-      metric("Gross kg", (totals) => totals.grossKg),
-      metric("Returned kg", (totals) => totals.returnedKg),
-      metric("Net kg", (totals) => totals.netKg),
-      metric("Net amount (PHP)", (totals) => Number(totals.netAmount.toFixed(2))),
-      metric("Avg net kg per event", (totals) => Number(totals.avgOrderSizeKg.toFixed(3))),
-      metric("Return rate", (totals) => formatPercent(totals.returnRatePct)),
-      ["Data exceptions", overview.exceptionCount, overview.exceptionCount],
-    ],
-  };
-}
-
-function demandRowColumns(): string[] {
-  return [
-    "Customer Code",
-    "Customer",
-    "Store",
-    "Classification",
-    "Branch",
-    "Channel",
-    "Billing Mode",
-    "kg Basis",
-    "Product Code",
-    "Product",
-    "Gas Type (from category)",
-    "Size kg",
-    "Unit",
-    "Events",
-    "Gross Qty",
-    "Returned Qty",
-    "Net Qty",
-    "Gross kg",
-    "Returned kg",
-    "Net kg",
-    "Return Rate",
-    "Net Amount",
-    "Avg Net kg / Event",
-    "Metered kg",
-    "Weighed kg",
-    "Variance kg",
-    "Flags",
-  ];
-}
-
-function demandRow(row: CustomerOrderConsumptionRow): ReportExportCell[] {
-  return [
-    row.customerCode,
-    row.customerName,
-    row.storeName,
-    row.classificationName,
-    row.branchName,
-    CHANNEL_LABEL[row.channel] ?? row.channel,
-    row.billingMode ?? "",
-    // States, on every line, whether the kg was measured or inferred.
-    row.kgIsProxy ? "Proxy (qty x cylinder size)" : "Measured",
-    row.productCode,
-    row.productName,
-    row.gasType ?? "",
-    row.sizeKg == null ? "" : row.sizeKg,
-    row.quantityUnit,
-    row.orderCount,
-    row.grossQty,
-    row.returnedQty,
-    row.netQty,
-    Number(row.grossKg.toFixed(3)),
-    Number(row.returnedKg.toFixed(3)),
-    Number(row.netKg.toFixed(3)),
-    formatPercent(computeReturnRate(row.returnedKg, row.grossKg)),
-    Number(row.netAmount.toFixed(2)),
-    Number(row.avgOrderSizeKg.toFixed(3)),
-    Number(row.meteredKg.toFixed(3)),
-    Number(row.wiwoKg.toFixed(3)),
-    Number(row.varianceKg.toFixed(3)),
-    row.exceptionCodes.join(", "),
-  ];
-}
-
-function demandSection(rows: CustomerOrderConsumptionRow[]): ReportExportSection {
-  return {
-    title: "Demand by Customer",
-    columns: demandRowColumns(),
-    rows: rows.map(demandRow),
-  };
-}
-
-/**
- * The report-level trend would blend the two kg bases, so the export re-splits
- * it per month per channel straight from the rows.
- */
-function trendSection(rows: CustomerOrderConsumptionRow[]): ReportExportSection {
-  const buckets = new Map<string, MonthlyTrendPoint & { channel: string }>();
-  const events = new Map<string, Set<string>>();
-
-  for (const row of rows) {
-    for (const point of row.monthlyTrend) {
-      const key = `${point.yearMonth}|${row.channel}`;
-      const current =
-        buckets.get(key) ??
-        {
-          yearMonth: point.yearMonth,
-          channel: row.channel,
-          orderCount: 0,
-          orderKeys: [],
-          grossQty: 0,
-          returnedQty: 0,
-          grossKg: 0,
-          returnedKg: 0,
-          netKg: 0,
-        };
-      // Deduped so an order covering three products is one billing event.
-      const bucket = events.get(key) ?? new Set<string>();
-      for (const orderKey of point.orderKeys) bucket.add(orderKey);
-      events.set(key, bucket);
-
-      current.orderCount = bucket.size;
-      current.grossQty += point.grossQty;
-      current.returnedQty += point.returnedQty;
-      current.grossKg += point.grossKg;
-      current.returnedKg += point.returnedKg;
-      current.netKg = current.grossKg - current.returnedKg;
-      buckets.set(key, current);
+export function flattenProductsForExport(rows: CustomerOrderConsumptionRow[]): FlatProductExportRow[] {
+  const result: FlatProductExportRow[] = [];
+  for (const r of rows) {
+    for (const p of r.products) {
+      result.push({
+        "Customer Code": r.customerCode,
+        "Customer Name": r.customerName,
+        "Product Name": p.productName,
+        "Product Code": p.productCode,
+        "Cylinder Size (Kg)": p.cylinderSizeKg ? `${p.cylinderSizeKg} kg` : "N/A",
+        "Gas Type": p.gasType ?? "LPG",
+        "Channel": p.channel,
+        "Order Frequency": p.orderFrequency,
+        "Fulfilled Pieces": p.fulfilledQty,
+        "Returned Pieces": p.returnedQty,
+        "Net Pieces": p.netQty,
+        "Gross Kg": Math.round(p.grossKg * 100) / 100,
+        "Returned Kg": Math.round(p.returnedKg * 100) / 100,
+        "Net Purchased Kg": Math.round(p.netKg * 100) / 100,
+        "Avg Order Size Kg": p.avgOrderSizeKg,
+        "Net Revenue (PHP)": Math.round(p.netAmount * 100) / 100,
+      });
     }
   }
-
-  return {
-    title: "Monthly Trend",
-    columns: [
-      "Month",
-      "Channel",
-      "Events",
-      "Gross Qty",
-      "Returned Qty",
-      "Gross kg",
-      "Returned kg",
-      "Net kg",
-    ],
-    rows: [...buckets.values()]
-      .sort((a, b) => a.yearMonth.localeCompare(b.yearMonth))
-      .map((point) => [
-        formatYearMonth(point.yearMonth),
-        CHANNEL_LABEL[point.channel] ?? point.channel,
-        point.orderCount,
-        point.grossQty,
-        point.returnedQty,
-        Number(point.grossKg.toFixed(3)),
-        Number(point.returnedKg.toFixed(3)),
-        Number(point.netKg.toFixed(3)),
-      ]),
-  };
+  return result;
 }
 
-function exceptionSection(exceptions: ReportException[]): ReportExportSection {
-  return {
-    title: "Data Exceptions",
-    columns: [
-      "Code",
-      "Channel",
-      "Customer Code",
-      "Customer",
-      "Reference Type",
-      "Reference",
-      "Quantity",
-      "kg",
-      "Detail",
-    ],
-    rows: exceptions.map((item) => [
-      item.code,
-      CHANNEL_LABEL[item.channel] ?? item.channel,
-      item.customerCode,
-      item.customerName,
-      item.referenceType,
-      item.referenceNo,
-      item.quantity,
-      Number(item.kg.toFixed(3)),
-      item.detail,
-    ]),
-  };
-}
-
-/**
- * Every sheet the report can produce, in the order they are written.
- */
-export function buildReportExportSections(
-  report: CustomerOrderConsumptionReportResponse
-): ReportExportSection[] {
-  return [
-    overviewSection(report.overview),
-    demandSection(report.rows),
-    trendSection(report.rows),
-    exceptionSection(report.exceptions),
-  ];
-}
-
-/**
- * Flat table only — the sheet a user pivots in Excel themselves.
- */
-export function buildDemandExportSections(
-  rows: CustomerOrderConsumptionRow[]
-): ReportExportSection[] {
-  return [{ title: "Demand by Customer", columns: demandRowColumns(), rows: rows.map(demandRow) }];
-}
-
-/** Compact kg text used by the table cells and the PDF footer. */
-export function exportKg(value: number): string {
-  return formatKgExact(value);
-}
-
-/** Date text reused by the documents sheet and the drawer. */
-export function exportDate(value: string | null | undefined): string {
-  return formatReportDate(value);
+export function flattenExceptionsForExport(exceptions: ReportException[]): FlatExceptionExportRow[] {
+  return exceptions.map((e) => ({
+    "Exception Code": e.code,
+    "Channel": e.channel,
+    "Customer Code": e.customerCode,
+    "Customer Name": e.customerName,
+    "Reference Type": e.referenceType,
+    "Reference No": e.referenceNo,
+    "Detail": e.detail,
+    "Quantity": e.quantity,
+    "Kg": e.kg,
+  }));
 }

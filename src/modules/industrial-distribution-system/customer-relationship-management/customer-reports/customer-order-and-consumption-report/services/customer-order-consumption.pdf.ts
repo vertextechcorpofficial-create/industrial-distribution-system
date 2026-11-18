@@ -1,143 +1,101 @@
+// src/modules/industrial-distribution-system/customer-relationship-management/customer-reports/customer-order-and-consumption-report/services/customer-order-consumption.pdf.ts
 // ============================================================
-// customer-order-consumption.pdf.ts
-// Landscape A4 PDF built from the same export sections as the workbook, so
-// the printed page and the spreadsheet can never disagree.
+// PDF Export using jsPDF and jspdf-autotable.
+// Landscape A4 orientation.
+// No LaTeX formatting used.
 // ============================================================
 
 import { jsPDF } from "jspdf";
 import autoTable from "jspdf-autotable";
-
 import type { CustomerOrderConsumptionReportResponse } from "../types/customer-order-consumption.types";
-import {
-  buildReportExportSections,
-  buildReportFilterContext,
-  type ReportExportCell,
-  type ReportExportSection,
-} from "./customer-order-consumption.export-model";
-import {
-  buildReportFilename,
-  formatGeneratedAt,
-} from "./customer-order-consumption.helpers";
+import { formatAmount, formatKgCompact, formatQty } from "./customer-order-consumption.helpers";
 
-const numberFormatter = new Intl.NumberFormat("en-US", {
-  maximumFractionDigits: 3,
-});
-
-function formatCell(value: ReportExportCell): string {
-  return typeof value === "number" ? numberFormatter.format(value) : value;
-}
-
-function headerLines(
-  report: CustomerOrderConsumptionReportResponse
-): string[] {
-  const filters = buildReportFilterContext(report.filters)
-    .map(({ label, value }) => `${label}: ${value}`)
-    .join("  |  ");
-
-  const totals = [
-    `Cylinder net ${numberFormatter.format(report.overview.cylinder.netKg)} kg (proxy)`,
-    `LPG net ${numberFormatter.format(report.overview.lpg.netKg)} kg (measured)`,
-    `Customers ${report.overview.totalCustomers}`,
-    `Events ${report.overview.totalOrders}`,
-    `Exceptions ${report.overview.exceptionCount}`,
-  ].join("  |  ");
-
-  return [filters, `Generated: ${formatGeneratedAt(report.generatedAt)}  |  Cutoff: ${report.reportingCutoff}`, totals];
-}
-
-function drawReportHeader(doc: jsPDF, title: string, report: CustomerOrderConsumptionReportResponse): void {
-  doc.setFont("helvetica", "bold");
-  doc.setFontSize(13);
-  doc.setTextColor(15, 23, 42);
-  doc.text(title, 10, 11);
-
-  doc.setFont("helvetica", "normal");
-  doc.setFontSize(7);
-  doc.setTextColor(71, 85, 105);
-  // Three wrapped lines reserve their own band; startY/margin below must clear it.
-  headerLines(report).forEach((line, index) => {
-    doc.text(line, 10, 16 + index * 4, { maxWidth: 277 });
-  });
-}
-
-function drawPageFooters(doc: jsPDF): void {
-  const totalPages = doc.getNumberOfPages();
-  for (let pageNumber = 1; pageNumber <= totalPages; pageNumber += 1) {
-    doc.setPage(pageNumber);
-    doc.setFont("helvetica", "normal");
-    doc.setFontSize(7);
-    doc.setTextColor(100, 116, 139);
-    doc.text(`Page ${pageNumber} of ${totalPages}`, 287, 203, { align: "right" });
-  }
-}
-
-function drawSection(
-  doc: jsPDF,
-  report: CustomerOrderConsumptionReportResponse,
-  section: ReportExportSection
-): void {
-  const firstPage = doc.getNumberOfPages();
-
-  autoTable(doc, {
-    startY: 30,
-    head: [section.columns],
-    body: section.rows.map((row) => row.map(formatCell)),
-    showHead: "everyPage",
-    margin: { top: 30, right: 10, bottom: 13, left: 10 },
-    pageBreak: "auto",
-    rowPageBreak: "avoid",
-    styles: { fontSize: 6.5, cellPadding: 1.4, overflow: "linebreak", valign: "middle" },
-    headStyles: { fillColor: [30, 64, 175], textColor: 255 },
-    alternateRowStyles: { fillColor: [248, 250, 252] },
-    willDrawPage: () => {
-      const isContinuation = doc.getNumberOfPages() > firstPage;
-      drawReportHeader(
-        doc,
-        isContinuation ? `${section.title} (continued)` : section.title,
-        report
-      );
-    },
-  });
-}
-
-/**
- * Builds the document without saving it so the page layout stays testable.
- * Empty sections still get a page: a missing sheet reads as a lost report.
- */
-export function buildCustomerOrderConsumptionPdf(
+export function generateCustomerOrderConsumptionPdf(
   report: CustomerOrderConsumptionReportResponse
 ): jsPDF {
-  const doc = new jsPDF({ orientation: "landscape", unit: "mm", format: "a4" });
+  const doc = new jsPDF({ orientation: "landscape", unit: "pt", format: "a4" });
 
-  buildReportExportSections(report).forEach((section, index) => {
-    if (index > 0) doc.addPage();
-    drawSection(doc, report, section);
+  // Title & Header
+  doc.setFontSize(16);
+  doc.text("Customer Order & Consumption Report", 40, 40);
+
+  doc.setFontSize(10);
+  doc.setTextColor(100);
+  doc.text(
+    `Window: ${report.filters.startDate} to ${report.filters.endDate}  |  Cutoff: ${report.reportingCutoff}  |  Generated: ${new Date(report.generatedAt).toLocaleString()}`,
+    40,
+    58
+  );
+
+  doc.text(
+    `Total Customers: ${report.overview.totalCustomers}  |  Orders: ${report.overview.totalOrders}  |  Cylinder Net: ${formatKgCompact(report.overview.cylinder.netKg)}  |  LPG Net: ${formatKgCompact(report.overview.lpg.netKg)}`,
+    40,
+    74
+  );
+
+  // Table Data (Customer Main Group)
+  const tableRows = report.rows.map((r) => [
+    r.customerCode,
+    r.customerName,
+    r.branchName,
+    formatQty(r.orderFrequency),
+    formatQty(r.fulfilledQty),
+    formatQty(r.returnedQty),
+    formatQty(r.netQty),
+    formatKgCompact(r.netKg),
+    formatKgCompact(r.avgOrderSizeKg),
+    formatAmount(r.netAmount),
+  ]);
+
+  autoTable(doc, {
+    startY: 90,
+    head: [
+      [
+        "Code",
+        "Customer",
+        "Branch",
+        "Orders",
+        "Fulfilled",
+        "Returned",
+        "Net Units",
+        "Net Kg",
+        "Avg Order",
+        "Net Revenue",
+      ],
+    ],
+    body: tableRows,
+    styles: { fontSize: 8, cellPadding: 4 },
+    headStyles: { fillColor: [40, 50, 70], textColor: [255, 255, 255] },
+    alternateRowStyles: { fillColor: [248, 250, 252] },
+    margin: { left: 40, right: 40 },
   });
-  drawPageFooters(doc);
 
   return doc;
 }
 
-export function exportCustomerOrderConsumptionPdf(
-  report: CustomerOrderConsumptionReportResponse
+export function downloadCustomerOrderConsumptionPdf(
+  report: CustomerOrderConsumptionReportResponse,
+  filename = "customer-order-and-consumption-report.pdf"
 ): void {
-  buildCustomerOrderConsumptionPdf(report).save(
-    buildReportFilename("customer-order-consumption", report.filters, "pdf")
-  );
+  const doc = generateCustomerOrderConsumptionPdf(report);
+  doc.save(filename);
 }
 
 /**
- * Opens the print dialog instead of downloading, which is what the branch
- * users asked for when they want the period on paper.
+ * Generates the landscape A4 PDF report with print instructions embedded
+ * and opens a print-ready preview window. Falls back to window.print() if
+ * browser popup settings block opening a new tab.
  */
 export function printCustomerOrderConsumptionPdf(
   report: CustomerOrderConsumptionReportResponse
-): void {
-  const doc = buildCustomerOrderConsumptionPdf(report);
-  const blob = doc.output("blob");
-  const url = URL.createObjectURL(blob);
-  const frame = window.open(url, "_blank");
-  // Revoking immediately would cancel the load in some browsers.
-  window.setTimeout(() => URL.revokeObjectURL(url), 60_000);
-  frame?.focus();
+): "pdf_window" | "browser_print" {
+  const doc = generateCustomerOrderConsumptionPdf(report);
+  doc.autoPrint();
+  const blobUrl = doc.output("bloburl");
+  const printWindow = window.open(String(blobUrl), "_blank", "noopener,noreferrer");
+  if (printWindow) {
+    return "pdf_window";
+  }
+  window.print();
+  return "browser_print";
 }
