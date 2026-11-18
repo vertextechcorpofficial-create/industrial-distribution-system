@@ -100,16 +100,16 @@ function DonutCustomTooltip({
   const data = payload[0];
 
   return (
-    <div className="rounded-lg border border-border/80 bg-background/95 p-2 shadow-xl backdrop-blur-md text-xs min-w-[140px]">
-      <div className="flex items-center gap-1.5 font-semibold text-foreground mb-1">
+    <div className="relative z-50 rounded-lg border border-border bg-popover text-popover-foreground p-2.5 shadow-2xl text-xs min-w-[150px]">
+      <div className="flex items-center gap-1.5 font-semibold text-foreground mb-1.5">
         <span className="h-2 w-2 rounded-full shrink-0" style={{ backgroundColor: data.payload.color }} />
-        <span>{data.name}</span>
+        <span className="truncate">{data.name}</span>
       </div>
-      <div className="flex justify-between text-muted-foreground text-[11px]">
+      <div className="flex justify-between items-center text-muted-foreground text-[11px] gap-2">
         <span>Count:</span>
         <span className="font-bold text-foreground">{data.value} deliveries</span>
       </div>
-      <div className="flex justify-between text-muted-foreground text-[11px] mt-0.5">
+      <div className="flex justify-between items-center text-muted-foreground text-[11px] mt-1 gap-2">
         <span>Share:</span>
         <span className="font-semibold text-emerald-600 dark:text-emerald-400">{data.payload.percentage}%</span>
       </div>
@@ -286,7 +286,8 @@ export function DeliverPerformanceCharts() {
                         <Cell key={`cell-${index}`} fill={entry.color} />
                       ))}
                     </Pie>
-                    <Tooltip content={<DonutCustomTooltip />} />
+                    {/* AG-COMMENT: Tooltip wrapperStyle with z-50 ensures tooltip floats above the center label badge */}
+                    <Tooltip content={<DonutCustomTooltip />} wrapperStyle={{ zIndex: 50, pointerEvents: "none" }} />
                     <Legend
                       wrapperStyle={{ fontSize: "11px", paddingTop: "2px" }}
                       iconType="circle"
@@ -294,8 +295,8 @@ export function DeliverPerformanceCharts() {
                     />
                   </PieChart>
                 </ResponsiveContainer>
-                {/* Center KPI badge */}
-                <div className="absolute top-[37%] flex flex-col items-center justify-center pointer-events-none">
+                {/* Center KPI badge (z-10 ensures it stays beneath hovered tooltips) */}
+                <div className="absolute top-[37%] flex flex-col items-center justify-center pointer-events-none z-10">
                   <span className="text-base font-bold text-foreground">
                     {report?.kpis.fulfillmentRate ?? 0}%
                   </span>
