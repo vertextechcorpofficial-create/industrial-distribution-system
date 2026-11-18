@@ -146,25 +146,52 @@ export function StockMovementVarianceReportProvider({
   }, []);
 
   // ── Report fetch ────────────────────────────────────────────────────────────
-  const loadReport = React.useCallback(async (activeFilters: StockMovementVarianceFilters) => {
-    setIsLoading(true);
-    setError(null);
-    try {
-      const data = await fetchStockMovementVarianceReport(activeFilters);
-      setReport(data);
-      // A new dataset invalidates whatever line was open in the panel.
-      setSelectedRow(null);
-    } catch (err) {
-      console.error("[StockMovementVarianceProvider] Report failure:", err);
-      setError(err instanceof Error ? err.message : "Failed to load the variance dataset");
-    } finally {
-      setIsLoading(false);
-    }
+  // Track the active AbortController so rapid Apply / Refresh actions abort any
+  // superseded request cleanly instead of racing or wasting gateway quota.
+  const abortControllerRef = React.useRef<AbortController | null>(null);
+
+  const loadReport = React.useCallback(
+    async (activeFilters: StockMovementVarianceFilters, forceRefresh = false) => {
+      abortControllerRef.current?.abort();
+      const controller = new AbortController();
+      abortControllerRef.current = controller;
+
+      setIsLoading(true);
+      setError(null);
+      try {
+        const data = await fetchStockMovementVarianceReport(activeFilters, {
+          refresh: forceRefresh,
+          signal: controller.signal,
+        });
+        if (controller.signal.aborted) return;
+        setReport(data);
+        // A new dataset invalidates whatever line was open in the panel.
+        setSelectedRow(null);
+      } catch (err) {
+        if (err instanceof DOMException && err.name === "AbortError") {
+          return;
+        }
+        console.error("[StockMovementVarianceProvider] Report failure:", err);
+        setError(err instanceof Error ? err.message : "Failed to load the variance dataset");
+      } finally {
+        if (abortControllerRef.current === controller) {
+          setIsLoading(false);
+        }
+      }
+    },
+    []
+  );
+
+  // Cancel any in-flight report request when the provider unmounts.
+  React.useEffect(() => {
+    return () => {
+      abortControllerRef.current?.abort();
+    };
   }, []);
 
   React.useEffect(() => {
     if (!appliedFilters) return;
-    void loadReport(appliedFilters);
+    void loadReport(appliedFilters, false);
   }, [appliedFilters, loadReport]);
 
   const apply = React.useCallback(() => {
@@ -183,7 +210,8 @@ export function StockMovementVarianceReportProvider({
 
   const refresh = React.useCallback(async () => {
     if (!appliedFilters) return;
-    await loadReport(appliedFilters);
+    // Explicit Refresh bypasses the short-TTL ledger cache to pull live data.
+    await loadReport(appliedFilters, true);
   }, [appliedFilters, loadReport]);
 
   // ── Exports ─────────────────────────────────────────────────────────────────

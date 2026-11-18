@@ -18,10 +18,22 @@
 // Sources of truth
 // - Spring-backed `view-product-movements` ledger (posted in/out per document).
 //   Reachable only through SPRING_API_BASE_URL; Directus has no equivalent view.
-//   The view keys on branch NAME, so each branch costs one ledger call.
+//   The `/filter` endpoint accepts repeated `branchName` parameters so all
+//   branches in scope are read in ONE batched request (avoiding per-branch HTTP
+//   429 rate-limit bursts and multi-minute retry stalls).
 // - Directus `physical_inventory` + `physical_inventory_details`: committed counts
 //   carrying system_count, physical_count and the reporting cutoff.
 // - Directus `sales_invoice`: transaction_status, used to detect voids.
+//
+// Performance architecture
+// - Phase 1 (parallel): Directus branch scope + serialized product master (full
+//   metadata for all serialized products, eliminating redundant per-product
+//   lookups before and after ledger reads).
+// - Phase 2 (parallel): Directus committed counts + single batched Spring ledger
+//   read (with short-TTL per-session cache & in-flight deduplication; bypassed
+//   when `?refresh=1` is supplied).
+// - Phase 3 (parallel): Directus voided-invoice check + unnumbered purchase
+//   receipt PO reference resolution, narrowed to the filtered product set.
 //
 // Known source-data limitations, surfaced to the caller instead of hidden:
 // - The movements view does not apply later voids, so voided invoices are
@@ -31,13 +43,14 @@
 //   which is only exact for products whose ledger is complete.
 // - Access is scoped by the branch the caller selects; the platform has no
 //   per-user branch permission table to enforce it further.
-// - When an individual branch ledger cannot be read, that branch is omitted from
+// - When a branch ledger batch cannot be read, those branches are omitted from
 //   the result and named in `warnings` rather than reported as a zero balance.
 //
 // Complies with VoSync standards:
 // - Full comments left behind for long-term maintainability
 // ==============================================================================
 
+import { createHash } from "node:crypto";
 import { NextRequest, NextResponse } from "next/server";
 import {
   buildVarianceRows,
@@ -59,11 +72,117 @@ export const dynamic = "force-dynamic";
 
 const COOKIE_NAME = "vos_access_token";
 
-/** How many branch ledger calls may be in flight at once. */
-const LEDGER_CONCURRENCY = 2;
-
-/** Attempts per branch ledger call before the branch is reported as unreadable. */
+/** Attempts per Spring ledger call before the batch is reported as unreadable. */
 const LEDGER_ATTEMPTS = 4;
+
+/** Maximum branchName params per fallback chunk if a single batched URL is rejected. */
+const FALLBACK_BRANCH_BATCH_SIZE = 8;
+
+/** Short TTL for per-session raw ledger snapshots so rapid filter tweaks stay instant and 429-free. */
+const LEDGER_CACHE_TTL_MS = 60_000;
+
+/** Bounded cache size so long-lived server processes never leak memory. */
+const LEDGER_CACHE_MAX_ENTRIES = 32;
+
+interface LedgerCacheEntry {
+  cachedAt: number;
+  tokenHash: string;
+  /** Empty string represents an unfiltered (all-products) ledger snapshot. */
+  productName: string;
+  /** Uppercase trimmed branch names covered by this snapshot. */
+  coveredBranches: Set<string>;
+  rows: RawMovementRow[];
+}
+
+/** Per-session raw ledger cache keyed by `${tokenHash}|${productName}|${branchKey}`. */
+const ledgerSnapshotCache = new Map<string, LedgerCacheEntry>();
+
+/** In-flight promise deduplication so concurrent identical requests share one Spring call. */
+const inFlightLedgerReads = new Map<string, Promise<BatchedFetchOutcome>>();
+
+interface BatchedFetchOutcome {
+  rows: RawMovementRow[] | null;
+  error?: string;
+  status?: number;
+}
+
+/** Hashes the caller's session token so cached snapshots are strictly isolated per session. */
+function hashSessionToken(token: string): string {
+  return createHash("sha256").update(token).digest("hex").slice(0, 16);
+}
+
+/** Evicts expired entries and keeps the ledger snapshot cache bounded. */
+function pruneLedgerCache(now: number): void {
+  for (const [key, entry] of ledgerSnapshotCache.entries()) {
+    if (now - entry.cachedAt > LEDGER_CACHE_TTL_MS) {
+      ledgerSnapshotCache.delete(key);
+    }
+  }
+  while (ledgerSnapshotCache.size > LEDGER_CACHE_MAX_ENTRIES) {
+    const oldestKey = ledgerSnapshotCache.keys().next().value;
+    if (!oldestKey) break;
+    ledgerSnapshotCache.delete(oldestKey);
+  }
+}
+
+/**
+ * Looks up a fresh cached raw ledger snapshot for the same authenticated session
+ * whose branch and product scope is a superset of what the caller requested.
+ */
+function findCachedLedgerSnapshot(
+  tokenHash: string,
+  scope: BranchScope[],
+  ledgerProductName: string
+): { rows: RawMovementRow[]; fromAllProducts: boolean } | null {
+  const now = Date.now();
+  pruneLedgerCache(now);
+
+  const requiredBranches = scope.map((b) => b.name.trim().toUpperCase());
+
+  // Prefer an exact product match first, then fall back to an unfiltered all-products snapshot.
+  let fallbackAllProducts: RawMovementRow[] | null = null;
+
+  for (const entry of ledgerSnapshotCache.values()) {
+    if (entry.tokenHash !== tokenHash) continue;
+    if (now - entry.cachedAt > LEDGER_CACHE_TTL_MS) continue;
+
+    const coversAllBranches = requiredBranches.every((name) => entry.coveredBranches.has(name));
+    if (!coversAllBranches) continue;
+
+    if (entry.productName === ledgerProductName) {
+      return { rows: entry.rows, fromAllProducts: false };
+    }
+    if (entry.productName === "" && ledgerProductName !== "") {
+      fallbackAllProducts = entry.rows;
+    }
+  }
+
+  if (fallbackAllProducts) {
+    return { rows: fallbackAllProducts, fromAllProducts: true };
+  }
+
+  return null;
+}
+
+/** Stores a freshly fetched raw ledger snapshot in the per-session cache. */
+function storeCachedLedgerSnapshot(
+  tokenHash: string,
+  scope: BranchScope[],
+  ledgerProductName: string,
+  rows: RawMovementRow[]
+): void {
+  const now = Date.now();
+  const branchNames = scope.map((b) => b.name.trim().toUpperCase()).sort();
+  const key = `${tokenHash}|${ledgerProductName}|${branchNames.join(",")}`;
+  ledgerSnapshotCache.set(key, {
+    cachedAt: now,
+    tokenHash,
+    productName: ledgerProductName,
+    coveredBranches: new Set(branchNames),
+    rows,
+  });
+  pruneLedgerCache(now);
+}
 
 /**
  * Retrieves the Directus endpoint and static token from environment.
@@ -155,8 +274,8 @@ function retryWaitMs(res: Response, attempt: number): number {
 }
 
 /**
- * Reads the movements ledger for one branch. The gateway rate-limits concurrent
- * branch calls, so a 429 is retried rather than reported as an unreadable branch.
+ * Executes a single Spring ledger read with bounded retry/backoff on transient
+ * 429/5xx gateway responses.
  */
 async function fetchLedger(url: string, token: string): Promise<Response> {
   let res = await fetch(url, {
@@ -177,6 +296,61 @@ async function fetchLedger(url: string, token: string): Promise<Response> {
   return res;
 }
 
+/**
+ * Fetches one batched `/api/view-product-movements/filter` request carrying all
+ * requested branch names in one HTTP round trip, deduplicating identical
+ * concurrent in-flight requests per session.
+ */
+async function fetchBatchedLedgerRequest(
+  springBase: string,
+  token: string,
+  tokenHash: string,
+  branches: BranchScope[],
+  ledgerProductName: string
+): Promise<BatchedFetchOutcome> {
+  const sortedNames = branches.map((b) => b.name.trim().toUpperCase()).sort();
+  const dedupeKey = `${tokenHash}|${ledgerProductName}|${sortedNames.join(",")}`;
+
+  const existing = inFlightLedgerReads.get(dedupeKey);
+  if (existing) return existing;
+
+  const task = (async (): Promise<BatchedFetchOutcome> => {
+    const movementsUrl = new URL(`${springBase}/api/view-product-movements/filter`);
+    for (const branch of branches) {
+      movementsUrl.searchParams.append("branchName", branch.name);
+    }
+    if (ledgerProductName) {
+      movementsUrl.searchParams.set("productName", ledgerProductName);
+    }
+
+    try {
+      const res = await fetchLedger(movementsUrl.toString(), token);
+      if (!res.ok) {
+        return { rows: null, error: `status ${res.status}`, status: res.status };
+      }
+
+      const parsed = JSON.parse(await res.text());
+      if (!Array.isArray(parsed)) {
+        return { rows: null, error: "a non-list payload", status: res.status };
+      }
+
+      return { rows: parsed as RawMovementRow[], status: res.status };
+    } catch (err) {
+      return {
+        rows: null,
+        error: err instanceof Error ? err.message : "unknown error",
+      };
+    }
+  })();
+
+  inFlightLedgerReads.set(dedupeKey, task);
+  try {
+    return await task;
+  } finally {
+    inFlightLedgerReads.delete(dedupeKey);
+  }
+}
+
 /** Unwraps a Directus relation value that may be an id or a nested object. */
 function relationId(value: unknown): number | null {
   if (value === null || value === undefined) return null;
@@ -195,9 +369,198 @@ function movementBranchName(row: RawMovementRow): string {
   return String(row.branchName ?? (row as Record<string, unknown>).branch_name ?? "").trim();
 }
 
+/** Reads the master product name off a movement row, whichever casing the view used. */
+function movementProductName(row: RawMovementRow): string {
+  return String(row.productName ?? (row as Record<string, unknown>).product_name ?? "").trim();
+}
+
 interface BranchScope {
   id: number;
   name: string;
+}
+
+interface SerializedProductRow {
+  product_id: number;
+  product_code?: string;
+  product_name?: string;
+  description?: string;
+  unit_of_measurement_count?: number;
+  product_category?: { category_id?: unknown; category_name?: string };
+}
+
+interface BranchLedgerBucket {
+  rows: RawMovementRow[] | null;
+  error?: string;
+  /** How many rows the view returned for this branch before the serialized scope cut them. */
+  sourceRowCount: number;
+}
+
+/**
+ * Splits a batched raw ledger array back into per-branch buckets, gating every
+ * row against `serializedProductIds` and shallow-cloning kept rows so cached
+ * arrays remain immutable across subsequent requests.
+ */
+function partitionBatchRowsByBranch(
+  rawRows: RawMovementRow[],
+  branches: BranchScope[],
+  serializedProductIds: Set<number>,
+  filterProductName?: string
+): Map<number, BranchLedgerBucket> {
+  const byId = new Map<number, BranchScope>();
+  const byUpperName = new Map<string, BranchScope>();
+  const buckets = new Map<number, BranchLedgerBucket>();
+
+  for (const branch of branches) {
+    byId.set(branch.id, branch);
+    byUpperName.set(branch.name.trim().toUpperCase(), branch);
+    buckets.set(branch.id, { rows: [], sourceRowCount: 0 });
+  }
+
+  const singleBranchFallback = branches.length === 1 ? branches[0] : null;
+  const targetProductUpper = filterProductName ? filterProductName.trim().toUpperCase() : "";
+
+  for (const row of rawRows) {
+    // When slicing an unfiltered all-products cache for a single-product query,
+    // ignore rows belonging to other products before tallying sourceRowCount.
+    if (targetProductUpper) {
+      const rowName = movementProductName(row).toUpperCase();
+      if (rowName && rowName !== targetProductUpper) continue;
+    }
+
+    const rawName = movementBranchName(row);
+    const rawBranchId = relationId(row.branchId ?? (row as Record<string, unknown>).branch_id);
+
+    const matchedBranch =
+      (rawName ? byUpperName.get(rawName.toUpperCase()) : undefined) ??
+      (rawBranchId !== null ? byId.get(rawBranchId) : undefined) ??
+      (!rawName && rawBranchId === null ? singleBranchFallback : null);
+
+    if (!matchedBranch) continue;
+
+    const bucket = buckets.get(matchedBranch.id);
+    if (!bucket || !bucket.rows) continue;
+
+    bucket.sourceRowCount += 1;
+
+    const pid = relationId(row.productId ?? (row as Record<string, unknown>).product_id);
+    if (pid === null || !serializedProductIds.has(pid)) continue;
+
+    // Shallow-copy kept rows so downstream receiptRef attachment never mutates cached arrays.
+    const cloned: RawMovementRow = { ...row };
+    if (!cloned.branchId) cloned.branchId = matchedBranch.id;
+    if (!rawName) cloned.branchName = matchedBranch.name;
+    bucket.rows.push(cloned);
+  }
+
+  return buckets;
+}
+
+/**
+ * Loads movement ledgers for all branches in scope with minimal Spring calls:
+ * 1. Serves from the 60s per-session raw ledger cache when warm (unless `forceRefresh`).
+ * 2. Otherwise sends ONE single batched request containing every `branchName` in scope.
+ * 3. Only if the gateway rejects a large URL (HTTP 400/414) does it fall back to
+ *    sequential small-chunk batches so it never triggers concurrent 429 bursts.
+ */
+async function loadBranchLedgers(params: {
+  springBase: string;
+  token: string;
+  tokenHash: string;
+  scope: BranchScope[];
+  ledgerProductName: string;
+  serializedProductIds: Set<number>;
+  forceRefresh: boolean;
+}): Promise<Map<number, BranchLedgerBucket>> {
+  const {
+    springBase,
+    token,
+    tokenHash,
+    scope,
+    ledgerProductName,
+    serializedProductIds,
+    forceRefresh,
+  } = params;
+
+  // 1. Fast path: per-session warm snapshot (bypassed on explicit Refresh).
+  if (!forceRefresh) {
+    const cached = findCachedLedgerSnapshot(tokenHash, scope, ledgerProductName);
+    if (cached) {
+      return partitionBatchRowsByBranch(
+        cached.rows,
+        scope,
+        serializedProductIds,
+        cached.fromAllProducts ? ledgerProductName : undefined
+      );
+    }
+  }
+
+  // 2. Primary path: ONE batched Spring request covering every branch in scope.
+  const primary = await fetchBatchedLedgerRequest(
+    springBase,
+    token,
+    tokenHash,
+    scope,
+    ledgerProductName
+  );
+
+  if (primary.rows !== null) {
+    storeCachedLedgerSnapshot(tokenHash, scope, ledgerProductName, primary.rows);
+    return partitionBatchRowsByBranch(primary.rows, scope, serializedProductIds);
+  }
+
+  // 3. URL-size fallback: if multi-branch query was rejected with 400/414 on a
+  //    large scope, split into smaller sequential chunks to avoid 429 bursts.
+  const shouldChunkFallback =
+    scope.length > 1 && (primary.status === 400 || primary.status === 414);
+
+  if (!shouldChunkFallback) {
+    const failed = new Map<number, BranchLedgerBucket>();
+    for (const branch of scope) {
+      failed.set(branch.id, { rows: null, error: primary.error, sourceRowCount: 0 });
+    }
+    return failed;
+  }
+
+  const combinedBuckets = new Map<number, BranchLedgerBucket>();
+  const allFetchedRows: RawMovementRow[] = [];
+  let allChunksSucceeded = true;
+  const batches = chunk(scope, FALLBACK_BRANCH_BATCH_SIZE);
+
+  for (let i = 0; i < batches.length; i += 1) {
+    if (i > 0) {
+      // Gentle sequential pacing protects the gateway rate limiter on fallback chunks.
+      await new Promise((resolve) => setTimeout(resolve, 250));
+    }
+
+    const batch = batches[i];
+    const outcome = await fetchBatchedLedgerRequest(
+      springBase,
+      token,
+      tokenHash,
+      batch,
+      ledgerProductName
+    );
+
+    if (outcome.rows === null) {
+      allChunksSucceeded = false;
+      for (const branch of batch) {
+        combinedBuckets.set(branch.id, { rows: null, error: outcome.error, sourceRowCount: 0 });
+      }
+      continue;
+    }
+
+    allFetchedRows.push(...outcome.rows);
+    const partitioned = partitionBatchRowsByBranch(outcome.rows, batch, serializedProductIds);
+    for (const [branchId, bucket] of partitioned.entries()) {
+      combinedBuckets.set(branchId, bucket);
+    }
+  }
+
+  if (allChunksSucceeded) {
+    storeCachedLedgerSnapshot(tokenHash, scope, ledgerProductName, allFetchedRows);
+  }
+
+  return combinedBuckets;
 }
 
 /**
@@ -318,6 +681,7 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
   const branchIdRaw = search.get("branchId")?.trim() ?? "";
   const categoryIdRaw = search.get("categoryId")?.trim() ?? "";
   const productIdRaw = search.get("productId")?.trim() ?? "";
+  const forceRefresh = search.get("refresh") === "1";
 
   if (!startDate || !endDate) {
     return NextResponse.json(
@@ -345,21 +709,33 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
     return NextResponse.json({ ok: false, error: "productId is not valid." }, { status: 400 });
   }
 
+  const requestedCategoryId = categoryIdRaw ? Number(categoryIdRaw) : null;
   const warnings: string[] = [];
+  const tokenHash = hashSessionToken(token);
 
   try {
-    // ── 1. Resolve the branch scope ───────────────────────────────────────────
-    // The movements view filters by branch NAME, so every branch in scope has to
-    // be translated before any ledger call. "All branches" uses exactly the same
-    // predicate the lookups route feeds the dropdown, so the two never disagree.
-    const branchRows = await directusList<{ id: number; branch_name: string; isActive?: boolean }>(
-      directusBase,
-      directusToken,
-      "branches",
-      requestedBranchId !== null
-        ? `filter[id][_eq]=${requestedBranchId}&filter[division_id][_eq]=1&fields=id,branch_name,isActive`
-        : `fields=id,branch_name&filter[isActive][_eq]=1&filter[division_id][_eq]=1&sort=branch_name&limit=-1`
-    );
+    // ── Phase 1 (parallel): Branch scope & full serialized product master ─────
+    // Reading branches (division_id = 1) and serialized products (is_serialized = 1)
+    // in parallel cuts two sequential Directus round trips up front, and pre-seeds
+    // `productMeta` + `ledgerProductName` so neither needs a second product query.
+    const [branchRows, serializedRows] = await Promise.all([
+      directusList<{ id: number; branch_name: string; isActive?: boolean }>(
+        directusBase,
+        directusToken,
+        "branches",
+        requestedBranchId !== null
+          ? `filter[id][_eq]=${requestedBranchId}&filter[division_id][_eq]=1&fields=id,branch_name,isActive`
+          : `fields=id,branch_name&filter[isActive][_eq]=1&filter[division_id][_eq]=1&sort=branch_name&limit=-1`
+      ),
+      directusList<SerializedProductRow>(
+        directusBase,
+        directusToken,
+        "products",
+        `fields=product_id,product_code,product_name,description,unit_of_measurement_count,` +
+          `product_category.category_id,product_category.category_name` +
+          `&filter[is_serialized][_eq]=1&limit=-1`
+      ),
+    ]);
 
     const scope: BranchScope[] = branchRows
       .filter((row) => Boolean(row.branch_name))
@@ -385,56 +761,35 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
       }
     }
 
-    const singleBranch = requestedBranchId !== null;
-    const scopeIds = scope.map((branch) => branch.id);
-    const branchFilter = singleBranch
-      ? `filter[ph_id][branch_id][_eq]=${scopeIds[0]}`
-      : `filter[ph_id][branch_id][_in]=${scopeIds.join(",")}`;
+    const serializedProductIds = new Set<number>();
+    const productMeta: Record<number, ProductMeta> = {};
+    const masterProductNameById = new Map<number, string>();
 
-    // ── 1b. Resolve the selected product's master name ───────────────────────
-    // The movements view only accepts a product NAME, but names are not unique in
-    // this schema, so the picker sends an id. The name looked up here is the
-    // master `product_name` the view is keyed on — never the `description` the
-    // screen shows — and the id is applied again after reconciliation so a
-    // same-name twin cannot sneak into the result.
-    let ledgerProductName = "";
-    if (requestedProductId !== null) {
-      const productRows = await directusList<{ product_id: number; product_name?: string }>(
-        directusBase,
-        directusToken,
-        "products",
-        `fields=product_id,product_name&filter[product_id][_eq]=${requestedProductId}&limit=1`
-      );
+    for (const row of serializedRows) {
+      const pid = Number(row.product_id);
+      if (!Number.isFinite(pid)) continue;
+      serializedProductIds.add(pid);
 
-      ledgerProductName = String(productRows[0]?.product_name ?? "").trim();
-      if (!ledgerProductName) {
-        return NextResponse.json(
-          {
-            ok: false,
-            error: `Product ${requestedProductId} has no name on record, so the movement ledger cannot be queried for it.`,
-          },
-          { status: 404 }
-        );
+      if (row.product_name) {
+        masterProductNameById.set(pid, String(row.product_name).trim());
       }
+
+      const unitCount = Number(row.unit_of_measurement_count ?? 1);
+      productMeta[pid] = {
+        productCode: row.product_code ? String(row.product_code) : null,
+        // ids-guide rule: products.description is the displayed product name.
+        productName:
+          productDisplayName(row.description, row.product_name, row.product_code) ||
+          `Product #${pid}`,
+        unitCount: Number.isFinite(unitCount) && unitCount > 0 ? unitCount : 1,
+        categoryId: relationId(row.product_category?.category_id),
+        categoryName: row.product_category?.category_name
+          ? String(row.product_category.category_name)
+          : null,
+      };
     }
 
-    // ── 1c. Serialized product scope ─────────────────────────────────────────
-    // Cylinder stock is what this report reconciles, so only products flagged
-    // `is_serialized` are eligible. The ledger view cannot express this, so the
-    // gate is read once from the product master and applied to both sources.
-    const serializedRows = await directusList<{ product_id: number }>(
-      directusBase,
-      directusToken,
-      "products",
-      `fields=product_id&filter[is_serialized][_eq]=1&limit=-1`
-    );
-
-    const serializedProductIds = new Set(
-      serializedRows.map((row) => Number(row.product_id)).filter((id) => Number.isFinite(id))
-    );
-
     if (serializedProductIds.size === 0) {
-      // Reporting zero lines here would blame the period for a master-data state.
       return NextResponse.json(
         {
           ok: false,
@@ -444,21 +799,49 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
       );
     }
 
-    // ── 2. Committed physical counts up to the cutoff (spec §4 verified records)
-    // Draft and cancelled count sheets are excluded: only a committed count is a
-    // verified record. One cutoff governs movements and counts (spec §8).
-    // cutOff_date is a MySQL TIMESTAMP, so the bound must run to the very end of
-    // the cutoff day or counts encoded later that same day would be dropped.
+    // Resolve the master product_name required by the Spring movements view.
+    // Most selections hit the in-memory map above with zero extra Directus queries.
+    let ledgerProductName = "";
+    if (requestedProductId !== null) {
+      ledgerProductName = masterProductNameById.get(requestedProductId) ?? "";
+      if (!ledgerProductName) {
+        const productRows = await directusList<{ product_id: number; product_name?: string }>(
+          directusBase,
+          directusToken,
+          "products",
+          `fields=product_id,product_name&filter[product_id][_eq]=${requestedProductId}&limit=1`
+        );
+        ledgerProductName = String(productRows[0]?.product_name ?? "").trim();
+        if (!ledgerProductName) {
+          return NextResponse.json(
+            {
+              ok: false,
+              error: `Product ${requestedProductId} has no name on record, so the movement ledger cannot be queried for it.`,
+            },
+            { status: 404 }
+          );
+        }
+      }
+    }
+
+    const singleBranch = requestedBranchId !== null;
+    const scopeIds = scope.map((branch) => branch.id);
+    const branchFilter = singleBranch
+      ? `filter[ph_id][branch_id][_eq]=${scopeIds[0]}`
+      : `filter[ph_id][branch_id][_in]=${scopeIds.join(",")}`;
+
+    // ── Phase 2 (parallel): Committed physical counts + batched Spring ledger ─
+    // Running both sources concurrently hides Directus count latency completely
+    // behind the single batched Spring ledger read.
     const cutoffInclusive = encodeURIComponent(`${endDate} 23:59:59`);
+    const productCountFilter =
+      requestedProductId !== null ? `&filter[product_id][_eq]=${requestedProductId}` : "";
 
     const countFieldQuery =
-      `fields=id,physical_count,system_count,variance,date_encoded,` +
-      `ph_id.id,ph_id.ph_no,ph_id.cutOff_date,ph_id.date_encoded,ph_id.branch_id,` +
-      `product_id.product_id,product_id.product_code,product_id.product_name,` +
-      `product_id.description,` +
-      `product_id.unit_of_measurement_count,product_id.parent_id,` +
-      `product_id.product_category.category_id,product_id.product_category.category_name` +
+      `fields=id,physical_count,system_count,variance,date_encoded,product_id,` +
+      `ph_id.id,ph_id.ph_no,ph_id.cutOff_date,ph_id.date_encoded,ph_id.branch_id` +
       `&${branchFilter}` +
+      productCountFilter +
       `&filter[ph_id][isComitted][_eq]=1` +
       `&filter[ph_id][isCancelled][_eq]=0` +
       `&filter[ph_id][cutOff_date][_lte]=${cutoffInclusive}` +
@@ -474,16 +857,25 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
       product_id?: unknown;
     }
 
-    // Cut to the serialized scope here so the product-master seeding below never
-    // spends a round trip on a product this report excludes.
-    const countRows = (
-      await directusList<RawCountRow>(
+    const [rawCountRows, ledgerBuckets] = await Promise.all([
+      directusList<RawCountRow>(
         directusBase,
         directusToken,
         "physical_inventory_details",
         countFieldQuery
-      )
-    ).filter((row) => {
+      ),
+      loadBranchLedgers({
+        springBase,
+        token,
+        tokenHash,
+        scope,
+        ledgerProductName,
+        serializedProductIds,
+        forceRefresh,
+      }),
+    ]);
+
+    const countRows = rawCountRows.filter((row) => {
       const pid = relationId(row.product_id);
       return pid !== null && serializedProductIds.has(pid);
     });
@@ -499,7 +891,11 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
           phNo: String(ph.ph_no),
           branchId: Number(ph.branch_id ?? 0),
           cutOffDate: ph.cutOff_date ? String(ph.cutOff_date) : null,
-          dateEncoded: ph.date_encoded ? String(ph.date_encoded) : row.date_encoded ? String(row.date_encoded) : null,
+          dateEncoded: ph.date_encoded
+            ? String(ph.date_encoded)
+            : row.date_encoded
+              ? String(row.date_encoded)
+              : null,
           productId,
           systemCount: Number(row.system_count ?? 0),
           physicalCount: Number(row.physical_count ?? 0),
@@ -516,67 +912,12 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
       else countsByBranch.set(line.branchId, [line]);
     }
 
-    // ── 3. Posted movements from the Spring ledger view, one call per branch ──
     const ledgerByBranch = new Map<number, RawMovementRow[]>();
-
-    interface LedgerResult {
-      rows: RawMovementRow[] | null;
-      error?: string;
-      /** How many rows the view returned before the serialized scope cut them. */
-      sourceRowCount: number;
-    }
-
-    const ledgerResults = await mapPool(
-      scope,
-      LEDGER_CONCURRENCY,
-      async (branch): Promise<LedgerResult> => {
-        const movementsUrl = new URL(`${springBase}/api/view-product-movements/filter`);
-        movementsUrl.searchParams.set("branchName", branch.name);
-        if (ledgerProductName) movementsUrl.searchParams.set("productName", ledgerProductName);
-
-        try {
-          const res = await fetchLedger(movementsUrl.toString(), token);
-
-          if (!res.ok) return { rows: null, error: `status ${res.status}`, sourceRowCount: 0 };
-
-          const parsed = JSON.parse(await res.text());
-          if (!Array.isArray(parsed)) {
-            return { rows: null, error: "a non-list payload", sourceRowCount: 0 };
-          }
-
-          // The view is trusted to honour branchName, but a stray row from another
-          // warehouse would corrupt both branches, so rows are re-keyed defensively.
-          const rows = (parsed as RawMovementRow[]).filter((row) => {
-            const pid = relationId(
-              row.productId ?? (row as Record<string, unknown>).product_id
-            );
-            if (pid === null || !serializedProductIds.has(pid)) return false;
-
-            const name = movementBranchName(row);
-            if (!name) {
-              if (!row.branchId) row.branchId = branch.id;
-              row.branchName = branch.name;
-              return true;
-            }
-            return name.trim().toUpperCase() === branch.name.trim().toUpperCase();
-          });
-
-          return { rows, sourceRowCount: parsed.length };
-        } catch (err) {
-          return {
-            rows: null,
-            error: err instanceof Error ? err.message : "unknown error",
-            sourceRowCount: 0,
-          };
-        }
-      }
-    );
-
     const movements: RawMovementRow[] = [];
     const reconciled: BranchScope[] = [];
 
-    ledgerResults.forEach((result, index) => {
-      const branch = scope[index];
+    for (const branch of scope) {
+      const result = ledgerBuckets.get(branch.id);
       if (!result || result.rows === null) {
         // A failed ledger is omitted outright: reporting it as an empty ledger
         // would invent variances for a branch that was simply unreachable.
@@ -585,7 +926,7 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
             result?.error ? ` (${result.error})` : ""
           }.`
         );
-        return;
+        continue;
       }
       ledgerByBranch.set(branch.id, result.rows);
       reconciled.push(branch);
@@ -597,7 +938,7 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
           `The movements ledger returned no rows for "${branch.name}", so its expected balances are zero.`
         );
       }
-    });
+    }
 
     if (reconciled.length === 0) {
       return NextResponse.json(
@@ -606,12 +947,26 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
       );
     }
 
-    // ── 4. Void detection: reversals the ledger view never applied ────────────
-    // The movements view includes sales invoices regardless of their later void,
-    // so voided documents are resolved here and excluded from every balance.
+    // ── Phase 3 (parallel): Void detection & unnumbered receipt PO tracing ───
+    // Narrow to the products that will survive product/category filtering so we
+    // never query Directus for invoices or receipts on excluded products.
+    const relevantMovements = movements.filter((row) => {
+      const pid = relationId(row.productId ?? (row as Record<string, unknown>).product_id);
+      if (pid === null) return false;
+      if (requestedProductId !== null && pid !== requestedProductId) return false;
+      if (
+        requestedCategoryId !== null &&
+        Number.isFinite(requestedCategoryId) &&
+        productMeta[pid]?.categoryId !== requestedCategoryId
+      ) {
+        return false;
+      }
+      return true;
+    });
+
     const salesInvoiceDocNos = Array.from(
       new Set(
-        movements
+        relevantMovements
           .filter((row) => {
             const docType = String(row.docType ?? "").toUpperCase();
             const docNo = String(row.docNo ?? row.doc_no ?? "").toUpperCase();
@@ -623,114 +978,44 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
     );
 
     const voidedDocuments = new Set<string>();
-    await mapPool(chunk(salesInvoiceDocNos, 150), 4, async (batch) => {
-      const rows = await directusList<{ invoice_no?: string; transaction_status?: string }>(
-        directusBase,
-        directusToken,
-        "sales_invoice",
-        `fields=invoice_no,transaction_status&filter[invoice_no][_in]=${encodeURIComponent(
-          batch.join(",")
-        )}&filter[transaction_status][_eq]=Void&limit=-1`
-      );
-      for (const row of rows) {
-        if (row.invoice_no) voidedDocuments.add(String(row.invoice_no).toUpperCase());
-      }
-    }).catch((err) => {
-      // Void resolution must not break the report; it degrades to a warning.
-      warnings.push(
-        `Voided-document check was incomplete: ${err instanceof Error ? err.message : "unknown error"}.`
-      );
-    });
 
-    // ── 4b. Citable reference for receipts posted without a number ───────────
-    try {
-      await attachReceiptReferences(
-        movements,
+    await Promise.all([
+      // 3a. Void detection: reversals the ledger view never applied.
+      mapPool(chunk(salesInvoiceDocNos, 150), 4, async (batch) => {
+        const rows = await directusList<{ invoice_no?: string; transaction_status?: string }>(
+          directusBase,
+          directusToken,
+          "sales_invoice",
+          `fields=invoice_no,transaction_status&filter[invoice_no][_in]=${encodeURIComponent(
+            batch.join(",")
+          )}&filter[transaction_status][_eq]=Void&limit=-1`
+        );
+        for (const row of rows) {
+          if (row.invoice_no) voidedDocuments.add(String(row.invoice_no).toUpperCase());
+        }
+      }).catch((err) => {
+        // Void resolution must not break the report; it degrades to a warning.
+        warnings.push(
+          `Voided-document check was incomplete: ${err instanceof Error ? err.message : "unknown error"}.`
+        );
+      }),
+      // 3b. Citable purchase-order reference for receipts posted without a number.
+      attachReceiptReferences(
+        relevantMovements,
         directusBase,
         directusToken,
         reconciled.map((branch) => branch.id)
-      );
-    } catch (err) {
-      // A missing reference must not break the reconciliation; the drawer then
-      // falls back to naming the supplier.
-      warnings.push(
-        `Unnumbered receipts could not be traced to their purchase orders: ${
-          err instanceof Error ? err.message : "unknown error"
-        }.`
-      );
-    }
+      ).catch((err) => {
+        // A missing reference must not break reconciliation; drawer falls back to supplier.
+        warnings.push(
+          `Unnumbered receipts could not be traced to their purchase orders: ${
+            err instanceof Error ? err.message : "unknown error"
+          }.`
+        );
+      }),
+    ]);
 
-    // ── 5. Product master for units, codes and categories ────────────────────
-    const movementProductIds = new Set<number>();
-    for (const row of movements) {
-      const pid = relationId(row.productId ?? (row as Record<string, unknown>).product_id);
-      if (pid !== null) movementProductIds.add(pid);
-    }
-
-    const productMeta: Record<number, ProductMeta> = {};
-
-    // Count rows already carry nested product data, so seed from them first.
-    for (const row of countRows) {
-      const pid = relationId(row.product_id);
-      if (pid === null) continue;
-      const nested = (typeof row.product_id === "object" ? row.product_id : {}) as Record<
-        string,
-        unknown
-      >;
-      const category = nested.product_category as
-        | { category_id?: unknown; category_name?: string }
-        | undefined;
-      const unitCount = Number(nested.unit_of_measurement_count ?? 1);
-      productMeta[pid] = {
-        productCode: nested.product_code ? String(nested.product_code) : null,
-        productName:
-          productDisplayName(nested.description, nested.product_name, nested.product_code) ||
-          `Product #${pid}`,
-        unitCount: Number.isFinite(unitCount) && unitCount > 0 ? unitCount : 1,
-        categoryId: relationId(category?.category_id),
-        categoryName: category?.category_name ? String(category.category_name) : null,
-      };
-    }
-
-    // Then fill any product that only appears in the ledger.
-    const missingIds = [...movementProductIds].filter((id) => !productMeta[id]);
-    await mapPool(chunk(missingIds, 200), 4, async (batch) => {
-      const rows = await directusList<{
-        product_id: number;
-        product_code?: string;
-        product_name?: string;
-        description?: string;
-        unit_of_measurement_count?: number;
-        product_category?: { category_id?: unknown; category_name?: string };
-      }>(
-        directusBase,
-        directusToken,
-        "products",
-        `fields=product_id,product_code,product_name,description,unit_of_measurement_count,` +
-          `product_category.category_id,product_category.category_name` +
-          `&filter[product_id][_in]=${batch.join(",")}&limit=-1`
-      );
-      for (const row of rows) {
-        const unitCount = Number(row.unit_of_measurement_count ?? 1);
-        productMeta[row.product_id] = {
-          productCode: row.product_code ? String(row.product_code) : null,
-          productName:
-            productDisplayName(row.description, row.product_name, row.product_code) ||
-            `Product #${row.product_id}`,
-          unitCount: Number.isFinite(unitCount) && unitCount > 0 ? unitCount : 1,
-          categoryId: relationId(row.product_category?.category_id),
-          categoryName: row.product_category?.category_name
-            ? String(row.product_category.category_name)
-            : null,
-        };
-      }
-    }).catch((err) => {
-      warnings.push(
-        `Some product masters could not be resolved: ${err instanceof Error ? err.message : "unknown error"}.`
-      );
-    });
-
-    // ── 6. Reconcile each branch, then merge ─────────────────────────────────
+    // ── Phase 4: Reconcile each branch, then merge ───────────────────────────
     const rows: StockMovementVarianceRow[] = [];
 
     for (const branch of reconciled) {
@@ -755,10 +1040,9 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
 
     // Category filtering happens after reconciliation: the ledger view exposes no
     // category parameter, so the movement query stays a single round trip.
-    const categoryId = categoryIdRaw ? Number(categoryIdRaw) : null;
     let finalRows =
-      categoryId !== null && Number.isFinite(categoryId)
-        ? rows.filter((row) => productMeta[row.productId]?.categoryId === categoryId)
+      requestedCategoryId !== null && Number.isFinite(requestedCategoryId)
+        ? rows.filter((row) => productMeta[row.productId]?.categoryId === requestedCategoryId)
         : rows;
 
     // The ledger was queried by product NAME, and names repeat in this schema, so
