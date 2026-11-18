@@ -13,7 +13,8 @@ function getDirectusBase(): string {
     process.env.NEXT_PUBLIC_DIRECTUS_URL ||
     process.env.NEXT_PUBLIC_API_BASE_URL ||
     "";
-  const cleaned = raw.trim().replace(/\/$/, "");
+  // AG-COMMENT: Strip inline comments (e.g. # Dummy Directus) and whitespace
+  const cleaned = raw.split("#")[0].trim().replace(/\/$/, "");
   if (!cleaned) {
     throw new Error("DIRECTUS_URL is not set. Add it to .env.local and restart the dev server.");
   }
@@ -22,7 +23,8 @@ function getDirectusBase(): string {
 
 /** Returns the Directus static token. Throws if not set. */
 function getDirectusToken(): string {
-  const token = (process.env.DIRECTUS_STATIC_TOKEN || process.env.DIRECTUS_TOKEN || "").trim();
+  // AG-COMMENT: Strip inline comments and whitespace
+  const token = (process.env.DIRECTUS_STATIC_TOKEN || process.env.DIRECTUS_TOKEN || "").split("#")[0].trim();
   if (!token) {
     throw new Error("DIRECTUS_STATIC_TOKEN is not set. Add it to .env.local and restart the dev server.");
   }
@@ -88,7 +90,7 @@ async function directusMutate<T>(path: string, method: "POST" | "PATCH" | "DELET
  */
 export async function getRawRtsHeaders() {
   return directusGet<{ data: Record<string, unknown>[] }>(
-    "/items/return_to_supplier?limit=-1&filter[supplier_id][division_id][_eq]=1&filter[branch_id][division_id][_eq]=1&fields=id,doc_no,transaction_date,is_posted,remarks,supplier_id.supplier_name,branch_id.branch_name,total_net_amount,encoder_id,date_posted&sort=-date_created"
+    "/items/return_to_supplier?limit=-1&filter[supplier_id][division_id][_eq]=1&filter[branch_id][division_id][_eq]=1&fields=id,doc_no,transaction_date,is_posted,remarks,supplier_id.id,supplier_id.supplier_name,branch_id.id,branch_id.branch_name,total_net_amount,encoder_id,date_posted&sort=-date_created"
   );
 }
 
@@ -142,8 +144,10 @@ export async function getRawReferences() {
   return Promise.all([
     directusGet<{ data: Record<string, unknown>[] }>("/items/suppliers?limit=-1&filter[supplier_type][_eq]=Trade&filter[division_id][_eq]=1"),
     directusGet<{ data: Record<string, unknown>[] }>("/items/branches?limit=-1&filter[division_id][_eq]=1"),
+    // AG-COMMENT: Branch filtered by division_id = 1 per ids-guide
+    // AG-COMMENT: Filter products by is_serialized = 1 per ids-guide rule
     directusGet<{ data: Record<string, unknown>[] }>(
-      "/items/products?limit=-1&fields=product_id,product_name,description,product_code,parent_id,unit_of_measurement,unit_of_measurement_count,cost_per_unit",
+      "/items/products?limit=-1&filter[is_serialized][_eq]=1&fields=product_id,product_name,description,product_code,parent_id,unit_of_measurement,unit_of_measurement_count,cost_per_unit,is_serialized",
     ),
     directusGet<{ data: Record<string, unknown>[] }>("/items/units?limit=-1&fields=unit_id,unit_name,unit_shortcut,order"),
     directusGet<{ data: Record<string, unknown>[] }>("/items/line_discount?limit=-1"),
@@ -160,39 +164,115 @@ export async function getRawReferences() {
  * Fetches raw product details (prices, parents) for a set of product IDs.
  */
 export async function getRawProductsByIds(productIds: number[]) {
-  const productFilter = JSON.stringify({ product_id: { _in: productIds } });
+  // AG-COMMENT: Guard against empty list to avoid malformed Directus query
+  if (!productIds || productIds.length === 0) {
+    return { data: [] };
+  }
+
+  // AG-COMMENT: Filter by product_id in list AND is_serialized = 1 per ids-guide rule
+  const productFilter = JSON.stringify({
+    _and: [
+      { product_id: { _in: productIds } },
+      { is_serialized: { _eq: 1 } },
+    ],
+  });
+
   return directusGet<{ data: Record<string, unknown>[] }>(
-    `/items/products?limit=-1&fields=product_id,parent_id,cost_per_unit&filter=${encodeURIComponent(productFilter)}`,
+    `/items/products?limit=-1&fields=product_id,parent_id,cost_per_unit,description,product_name,is_serialized&filter=${encodeURIComponent(productFilter)}`,
   );
 }
 
+// AG-COMMENT: Server-side cache and promise deduplication for Spring Boot branch inventory.
+// Since Spring Boot's view-running-inventory-by-unit endpoint queries by branchId (and not supplierId),
+// caching at the branch level prevents re-querying Spring Boot when users switch suppliers within the same branch.
+interface CachedBranchInventory {
+  data: InventoryViewRow[];
+  timestamp: number;
+}
+const serverBranchCache = new Map<number, CachedBranchInventory>();
+const serverBranchInFlight = new Map<number, Promise<InventoryViewRow[]>>();
+const BRANCH_CACHE_TTL_MS = 3 * 60 * 1000; // 3 minutes fresh cache
+const BRANCH_STALE_TTL_MS = 15 * 60 * 1000; // 15 minutes stale cache for 429 rate limit resilience
+
 /**
- * Fetches inventory from the Spring Boot VOS API.
- * This is kept in the repository as it is an external infrastructure call.
+ * Fetches inventory from the Spring Boot VOS API with server-side caching, in-flight deduplication,
+ * and 429 rate limit backoff + stale cache resilience.
  */
 export async function getSpringInventory(branchId: number, supplierId: number, token: string): Promise<InventoryViewRow[]> {
-  const SPRING_URL = process.env.SPRING_API_BASE_URL;
-  if (!SPRING_URL) throw new Error("SPRING_API_BASE_URL is not defined");
-
-  const startDate = "2000-01-01";
-  const endDate = "2099-12-31";
-  const targetUrl = `${SPRING_URL.replace(/\/$/, "")}/api/view-running-inventory-by-unit/all?startDate=${startDate}&endDate=${endDate}`;
-
-  const springRes = await fetch(targetUrl, {
-    method: "GET",
-    headers: {
-      "Content-Type": "application/json",
-      Authorization: `Bearer ${token}`,
-    },
-    cache: "no-store",
-  });
-
-  if (!springRes.ok) {
-    const text = await springRes.text().catch(() => `HTTP ${springRes.status}`);
-    throw new Error(`Spring Boot inventory fetch failed (${springRes.status}): ${text}`);
+  // AG-COMMENT: 1. Check in-memory fresh cache
+  const cached = serverBranchCache.get(branchId);
+  if (cached && Date.now() - cached.timestamp < BRANCH_CACHE_TTL_MS) {
+    return cached.data;
   }
 
-  return springRes.json();
+  // AG-COMMENT: 2. In-flight promise deduplication to prevent concurrent duplicate calls for the same branch
+  const inFlight = serverBranchInFlight.get(branchId);
+  if (inFlight) {
+    return inFlight;
+  }
+
+  const fetchPromise = (async () => {
+    const SPRING_URL = (process.env.SPRING_API_BASE_URL || "").split("#")[0].trim();
+    if (!SPRING_URL) throw new Error("SPRING_API_BASE_URL is not defined");
+
+    const effectiveToken = (token || process.env.VOS_ACCESS_TOKEN || process.env.vos_access_token || "").split("#")[0].trim();
+
+    const startDate = "2020-01-01";
+    const endDate = "2099-12-31";
+    const targetUrl = `${SPRING_URL.replace(/\/$/, "")}/api/view-running-inventory-by-unit/all?startDate=${startDate}&endDate=${endDate}&branchId=${branchId}&divisionId=1`;
+
+    const executeFetch = async () => {
+      return fetch(targetUrl, {
+        method: "GET",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${effectiveToken}`,
+        },
+        cache: "no-store",
+      });
+    };
+
+    let springRes = await executeFetch();
+
+    // AG-COMMENT: 3. Handle 429 Too Many Requests with retry or stale-while-revalidate fallback
+    if (springRes.status === 429) {
+      console.warn(`[RTS Repository] Spring Boot returned 429 Too Many Requests for branch ${branchId}. Checking stale cache...`);
+      // Check if we have stale data within the 15-minute window
+      if (cached && Date.now() - cached.timestamp < BRANCH_STALE_TTL_MS) {
+        console.warn(`[RTS Repository] Serving stale inventory for branch ${branchId} to bypass 429 rate limit.`);
+        return cached.data;
+      }
+
+      // No stale data available: wait 1.5s backoff and retry once
+      await new Promise((resolve) => setTimeout(resolve, 1500));
+      springRes = await executeFetch();
+
+      if (springRes.status === 429) {
+        // If still 429 and any cached data exists regardless of age, use it
+        if (cached) {
+          console.warn(`[RTS Repository] Serving emergency cached inventory for branch ${branchId}.`);
+          return cached.data;
+        }
+        throw new Error("The inventory service is receiving too many requests. Please wait a moment and try again.");
+      }
+    }
+
+    if (!springRes.ok) {
+      const text = await springRes.text().catch(() => `HTTP ${springRes.status}`);
+      throw new Error(`Spring Boot inventory fetch failed (${springRes.status}): ${text}`);
+    }
+
+    const data = (await springRes.json()) as InventoryViewRow[];
+    serverBranchCache.set(branchId, { data, timestamp: Date.now() });
+    return data;
+  })();
+
+  serverBranchInFlight.set(branchId, fetchPromise);
+  try {
+    return await fetchPromise;
+  } finally {
+    serverBranchInFlight.delete(branchId);
+  }
 }
 
 /**

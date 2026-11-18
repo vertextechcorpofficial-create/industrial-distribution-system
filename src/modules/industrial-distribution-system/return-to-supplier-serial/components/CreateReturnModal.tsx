@@ -84,35 +84,25 @@ export function CreateReturnModal({
   // RFID scanning state
   // Scanning state
 
+  // AG-COMMENT: Limit dropdown results to 50 items so Command doesn't freeze the DOM
   const filteredSuppliers = useMemo(() => {
-    if (!supplierSearch) return refs.suppliers;
-    return refs.suppliers.filter((s) =>
-      s.supplier_name.toLowerCase().includes(supplierSearch.toLowerCase()),
-    );
+    if (!supplierSearch.trim()) return refs.suppliers.slice(0, 50);
+    const term = supplierSearch.toLowerCase();
+    return refs.suppliers
+      .filter((s) => s.supplier_name.toLowerCase().includes(term))
+      .slice(0, 50);
   }, [refs.suppliers, supplierSearch]);
 
   const filteredBranches = useMemo(() => {
-    if (!branchSearch) return refs.branches;
-    return refs.branches.filter((b) =>
-      b.branch_name.toLowerCase().includes(branchSearch.toLowerCase()),
-    );
+    if (!branchSearch.trim()) return refs.branches.slice(0, 50);
+    const term = branchSearch.toLowerCase();
+    return refs.branches
+      .filter((b) => b.branch_name.toLowerCase().includes(term))
+      .slice(0, 50);
   }, [refs.branches, branchSearch]);
 
-  /**
-   * Groups the flat inventory records into product families for the picker.
-   * Enriches each variant with supplier discount from reference data.
-   * The view already provides: product_name, unit_name, unit_count,
-   * running_inventory (floored, remainder cascaded), price.
-   */
-  const groupedProducts = useMemo(() => {
-    if (inventory.length === 0) return [];
-
-    // Build connection + discount maps for enrichment
-    const connectionMap = new Map<string, (typeof refs.connections)[0]>();
-    refs.connections.forEach((c) =>
-      connectionMap.set(`${c.product_id}-${c.supplier_id}`, c),
-    );
-
+  // AG-COMMENT: Pre-compute reference lookup maps once when reference data changes (O(1) lookups)
+  const referenceMaps = useMemo(() => {
     const discountMap = new Map<string, (typeof refs.lineDiscounts)[0]>();
     refs.lineDiscounts.forEach((d) => discountMap.set(String(d.id), d));
 
@@ -126,19 +116,52 @@ export function CreateReturnModal({
       linePerDiscountMap.get(typeId)?.push(Number(lpd.line_id));
     });
 
-    // Build unit order map (unit_name/shortcut -> order) for filtering
     const unitOrderMap = new Map<string, number>();
+    const unitsByUpper = new Map<string, (typeof refs.units)[0]>();
     refs.units.forEach((u) => {
-      unitOrderMap.set(u.unit_name, u.order);
-      unitOrderMap.set(u.unit_shortcut, u.order);
+      if (u.unit_name) {
+        unitOrderMap.set(u.unit_name, u.order);
+        unitOrderMap.set(u.unit_name.toUpperCase(), u.order);
+        unitsByUpper.set(u.unit_name.toUpperCase(), u);
+      }
+      if (u.unit_shortcut) {
+        unitOrderMap.set(u.unit_shortcut, u.order);
+        unitOrderMap.set(u.unit_shortcut.toUpperCase(), u.order);
+        unitsByUpper.set(u.unit_shortcut.toUpperCase(), u);
+      }
     });
+
+    return { discountMap, discountTypeMap, linePerDiscountMap, unitOrderMap, unitsByUpper };
+  }, [refs]);
+
+  // AG-COMMENT: Only index connections for the selected supplier
+  const supplierConnectionMap = useMemo(() => {
+    const map = new Map<number, (typeof refs.connections)[0]>();
+    if (!selection.supplierId) return map;
+    const targetSupplierId = Number(selection.supplierId);
+    refs.connections.forEach((c) => {
+      if (Number(c.supplier_id) === targetSupplierId) {
+        map.set(Number(c.product_id), c);
+      }
+    });
+    return map;
+  }, [refs, selection.supplierId]);
+
+  /**
+   * Groups the flat inventory records into product families for the picker.
+   * Enriches each variant with supplier discount from reference data.
+   * The view already provides: product_name, unit_name, unit_count,
+   * running_inventory (floored, remainder cascaded), price.
+   */
+  const groupedProducts = useMemo(() => {
+    if (inventory.length === 0) return [];
+
+    const { discountMap, discountTypeMap, linePerDiscountMap, unitOrderMap, unitsByUpper } = referenceMaps;
 
     // Enrich inventory records
     const enrichedItems = inventory
       .map((item: InventoryRecord) => {
-        const connection = connectionMap.get(
-          `${item.product_id}-${selection.supplierId}`,
-        );
+        const connection = supplierConnectionMap.get(item.product_id);
 
         let discountLabel: string | undefined;
         let computedDiscount = 0;
@@ -163,9 +186,8 @@ export function CreateReturnModal({
           }
         }
 
-        const matchedUnit = refs.units.find(
-          (u) => u.unit_name === item.unit_name,
-        );
+        // AG-COMMENT: Fast O(1) case-insensitive unit lookup
+        const matchedUnit = unitsByUpper.get(item.unit_name?.toUpperCase());
 
         return {
           id: String(item.product_id),
@@ -183,11 +205,24 @@ export function CreateReturnModal({
           discountTypeId: currentDiscountTypeId,
         };
       })
-      // Filter: only stock > 0 AND unit order 0 or 2 (Full and Empty cylinders only)
+      // AG-COMMENT: Include physical cylinders (FULL and EMPTY) without discarding items with 0 or negative stock
       .filter((p) => {
-        const order = unitOrderMap.get(p.unit) ?? 0;
-        // Modified to allow order 0 (EMPTY) and 2 (FULL) to list all cylinder products in pieces
-        return Number(p.stock ?? 0) > 0 && (order === 0 || order === 2);
+        const unitUpper = (p.unit || "").trim().toUpperCase();
+        const isPhysicalCylinder =
+          unitUpper === "FULL" ||
+          unitUpper === "EMPTY" ||
+          unitUpper === "FL" ||
+          unitUpper === "MT" ||
+          unitUpper === "PCS" ||
+          unitUpper === "PIECE";
+        const order = unitOrderMap.get(p.unit) ?? unitOrderMap.get(unitUpper) ?? 0;
+        const isCylinderOrder = order === 0 || order === 2 || order === 3;
+        const isAllowedUnit =
+          isPhysicalCylinder ||
+          isCylinderOrder ||
+          !["REFILL", "SWAP", "DEPOSIT", "OUTRIGHT"].includes(unitUpper);
+
+        return isAllowedUnit;
       });
 
 
@@ -253,11 +288,15 @@ export function CreateReturnModal({
 
       return group;
     });
-  }, [inventory, refs, selection.supplierId]);
+  }, [inventory, referenceMaps, supplierConnectionMap]);
 
+  // AG-COMMENT: Debounce loading inventory to avoid triggering requests on rapid dropdown changes
   useEffect(() => {
     if (selection.supplierId && selection.branchId) {
-      loadInventory(Number(selection.branchId), Number(selection.supplierId));
+      const timer = setTimeout(() => {
+        loadInventory(Number(selection.branchId), Number(selection.supplierId));
+      }, 300);
+      return () => clearTimeout(timer);
     }
   }, [selection.supplierId, selection.branchId, loadInventory]);
 
@@ -387,7 +426,8 @@ export function CreateReturnModal({
   };
 
   const handleSubmit = async () => {
-    // Validate: supplier and branch must be selected
+    // AG-COMMENT: Granular client validations with specific item names to eliminate ambiguous errors
+    // 1. Supplier and branch must be selected
     if (!selection.supplierId || !selection.branchId) {
       toast.error("Validation Error", {
         description: "Please select a Supplier and Branch before confirming.",
@@ -395,7 +435,7 @@ export function CreateReturnModal({
       return;
     }
 
-    // Validate: cart must not be empty
+    // 2. Cart must not be empty
     if (cart.length === 0) {
       toast.error("Validation Error", {
         description: "Please add at least one product to return.",
@@ -403,12 +443,46 @@ export function CreateReturnModal({
       return;
     }
 
-    // Validate: all items must have a return type
-    const missingReturnType = cart.some((item) => !item.return_type_id);
-    if (missingReturnType) {
+    // 3. All items must have a valid UOM
+    const missingUom = cart.filter((item) => !item.uom_id);
+    if (missingUom.length > 0) {
+      const names = missingUom.map((i) => `"${i.name}"`).join(", ");
       toast.error("Validation Error", {
-        description:
-          "Please select a 'Return Type' for all items before confirming.",
+        description: `Product ${names} is missing a valid Unit of Measure. Please remove and re-add the item.`,
+      });
+      return;
+    }
+
+    // 4. All items must have a return type
+    const missingReturnType = cart.filter((item) => !item.return_type_id);
+    if (missingReturnType.length > 0) {
+      const names = missingReturnType.map((i) => `"${i.name}"`).join(", ");
+      toast.error("Validation Error", {
+        description: `Please select a 'Return Type' for product: ${names}`,
+      });
+      return;
+    }
+
+    // 5. All items must have at least 1 verified serial number
+    const zeroQtyItems = cart.filter((item) => !item.quantity || Number(item.quantity) <= 0);
+    if (zeroQtyItems.length > 0) {
+      const names = zeroQtyItems.map((i) => `"${i.name}"`).join(", ");
+      toast.error("Validation Error", {
+        description: `Product ${names} has 0 quantity. Please click on the product row and scan or enter verified serial numbers.`,
+      });
+      return;
+    }
+
+    // 6. Serial count must match quantity
+    const mismatchSerialItems = cart.filter(
+      (item) => !item.serials || item.serials.length !== item.quantity,
+    );
+    if (mismatchSerialItems.length > 0) {
+      const names = mismatchSerialItems
+        .map((i) => `"${i.name}" (${i.serials?.length || 0}/${i.quantity} serials)`)
+        .join(", ");
+      toast.error("Validation Error", {
+        description: `Scanned serial count must match quantity for: ${names}`,
       });
       return;
     }
@@ -517,7 +591,6 @@ export function CreateReturnModal({
                     <Popover
                       open={openSupplier}
                       onOpenChange={setOpenSupplier}
-                      modal={true}
                     >
                       <PopoverTrigger asChild>
                         <Button
@@ -581,7 +654,6 @@ export function CreateReturnModal({
                     <Popover
                       open={openBranch}
                       onOpenChange={setOpenBranch}
-                      modal={true}
                     >
                       <PopoverTrigger asChild>
                         <Button
@@ -645,15 +717,7 @@ export function CreateReturnModal({
                     <Label className="font-bold flex items-center gap-2">
                        <Package className="h-4 w-4 text-primary" /> Items
                     </Label>
-                    <div className="flex items-center gap-2">
-
-                      <Button
-                        onClick={() => setShowPicker(true)}
-                        className="h-9 text-xs"
-                      >
-                        <Plus className="mr-2 h-3 w-3" /> Add
-                      </Button>
-                    </div>
+ 
                   </div>
                   {cart.length > 0 ? (
                     <ReturnReviewPanel
@@ -674,8 +738,32 @@ export function CreateReturnModal({
                       readOnly={false}
                     />
                   ) : (
-                    <div className="border-2 border-dashed h-32 flex items-center justify-center text-muted-foreground text-sm">
-                      No items selected
+                    <div className="border-2 border-dashed h-36 rounded-xl flex flex-col items-center justify-center text-muted-foreground text-sm gap-3 p-4 bg-muted/10">
+                      <div className="text-center">
+                        <p className="font-semibold text-foreground">No items selected</p>
+                        <p className="text-xs text-muted-foreground mt-0.5">
+                          {isLoadingInventory
+                            ? "Loading products for this supplier and branch..."
+                            : `${groupedProducts.length} product families available`}
+                        </p>
+                      </div>
+                      <Button
+                        type="button"
+                        variant="default"
+                        size="sm"
+                        onClick={() => setShowPicker(true)}
+                        disabled={isLoadingInventory || groupedProducts.length === 0}
+                        className="h-8 text-xs font-semibold"
+                      >
+                        <Plus className="mr-1.5 h-3.5 w-3.5" />
+                        {isLoadingInventory ? (
+                          <>
+                            <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" /> Loading Products...
+                          </>
+                        ) : (
+                          `Browse & Add Products (${groupedProducts.length})`
+                        )}
+                      </Button>
                     </div>
                   )}
                 </div>
