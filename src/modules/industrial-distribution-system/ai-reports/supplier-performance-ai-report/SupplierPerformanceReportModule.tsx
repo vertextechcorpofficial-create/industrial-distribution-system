@@ -18,6 +18,7 @@ import {
     SupplierSummaryRow,
     AiInsightResponse,
     AiTierSlug,
+    ChatMessage,
 } from './types';
 import {
     fetchSupplierPerformanceData,
@@ -31,7 +32,7 @@ import { SummaryCards } from './components/SummaryCards';
 import { SupplierPerformanceCharts } from './components/SupplierPerformanceCharts';
 import { ResultsGrid } from './components/ResultsGrid';
 import { DetailDrawer } from './components/DetailPanel';
-import { AiInsightsPanel } from './components/AiInsightsPanel';
+import { AICopilotDrawer } from './components/AICopilotDrawer';
 
 export const SupplierPerformanceReportModule: React.FC = () => {
     const [filter, setFilter] = useState<SupplierPerformanceFilter>({});
@@ -42,7 +43,7 @@ export const SupplierPerformanceReportModule: React.FC = () => {
     const [selectedSupplier, setSelectedSupplier] = useState<SupplierSummaryRow | null>(null);
     const [isDrawerOpen, setIsDrawerOpen] = useState(false);
     const [aiInsight, setAiInsight] = useState<AiInsightResponse | null>(null);
-    const [showAiBanner, setShowAiBanner] = useState(false);
+    const [isAiDrawerOpen, setIsAiDrawerOpen] = useState(false);
 
     // Under-the-hood resolved tier (defaults to basic if not yet hydrated)
     const [userTier, setUserTier] = useState<{ tierSlug: AiTierSlug; tierName: string }>({
@@ -70,6 +71,8 @@ export const SupplierPerformanceReportModule: React.FC = () => {
     const loadReport = useCallback(async () => {
         setIsReportLoading(true);
         setErrorMessage(null);
+        // Clear stale AI insight on filter change so AI output strictly reflects current dataset
+        setAiInsight(null);
         try {
             const data = await fetchSupplierPerformanceData(filter);
             setReportData(data);
@@ -97,10 +100,12 @@ export const SupplierPerformanceReportModule: React.FC = () => {
         setIsDrawerOpen(true);
     };
 
-    // Trigger standard AI Copilot analysis (Overview)
+    // Trigger standard AI Copilot analysis (Drawer Open + Load Insights)
     const handleRunAi = async () => {
+        setIsAiDrawerOpen(true);
         if (!reportData) return;
-        setShowAiBanner(true);
+        if (aiInsight) return; // Already loaded
+
         setIsAiLoading(true);
         setErrorMessage(null);
         try {
@@ -114,12 +119,28 @@ export const SupplierPerformanceReportModule: React.FC = () => {
         }
     };
 
-    // Trigger Executive Custom Inquiry (Interactive Q&A)
-    const handleAskCustomQuery = async (query: string) => {
+    // Explicit Regenerate trigger from drawer
+    const handleRegenerateAi = async () => {
+        if (!reportData) return;
+        setIsAiLoading(true);
+        setErrorMessage(null);
+        try {
+            const insights = await generateGeminiInsights(reportData, userTier.tierSlug);
+            setAiInsight(insights);
+        } catch (err: unknown) {
+            const msg = err instanceof Error ? err.message : 'Failed to generate AI insights';
+            setErrorMessage(msg);
+        } finally {
+            setIsAiLoading(false);
+        }
+    };
+
+    // Trigger Executive Custom Inquiry (Interactive Q&A with Chat History)
+    const handleAskCustomQuery = async (query: string, chatHistory: ChatMessage[]) => {
         if (!reportData) return;
         setErrorMessage(null);
         try {
-            const insights = await generateGeminiInsights(reportData, userTier.tierSlug, query);
+            const insights = await generateGeminiInsights(reportData, userTier.tierSlug, query, chatHistory);
             setAiInsight((prev) => ({
                 ...(prev || insights),
                 userQuery: insights.userQuery,
@@ -173,17 +194,6 @@ export const SupplierPerformanceReportModule: React.FC = () => {
                 branches={branches}
             />
 
-            {/* AI Copilot Insights Banner (Segmented: Executive Overview vs Interactive Q&A) */}
-            {showAiBanner && (
-                <AiInsightsPanel
-                    aiInsight={aiInsight}
-                    activeTier={userTier.tierSlug}
-                    isAiLoading={isAiLoading}
-                    onDismiss={() => setShowAiBanner(false)}
-                    onAskCustomQuery={handleAskCustomQuery}
-                />
-            )}
-
             {/* Error Notification Banner */}
             {errorMessage && (
                 <div className="p-3 bg-rose-50 border border-rose-200 text-rose-700 dark:bg-rose-950/40 dark:border-rose-900/50 dark:text-rose-300 rounded-lg text-xs font-medium">
@@ -215,6 +225,19 @@ export const SupplierPerformanceReportModule: React.FC = () => {
                 isOpen={isDrawerOpen}
                 onClose={() => setIsDrawerOpen(false)}
                 supplier={selectedSupplier}
+            />
+
+            {/* Enterprise Slide-Over AI Copilot Drawer */}
+            <AICopilotDrawer
+                isOpen={isAiDrawerOpen}
+                insights={aiInsight}
+                reportPayload={reportData}
+                activeTier={userTier.tierSlug}
+                isLoading={isAiLoading}
+                error={errorMessage}
+                onClose={() => setIsAiDrawerOpen(false)}
+                onRegenerate={handleRegenerateAi}
+                onAskCustomQuery={handleAskCustomQuery}
             />
         </div>
     );
