@@ -39,16 +39,32 @@ function buildSearchParams(filters: StockMovementVarianceFilters): URLSearchPara
   return params;
 }
 
+export interface FetchReportOptions {
+  /** Bypasses the BFF's short-TTL per-session ledger snapshot cache. */
+  refresh?: boolean;
+  /** Allows the provider to cancel superseded in-flight requests cleanly. */
+  signal?: AbortSignal;
+}
+
 /**
  * Fetches the reconciled variance dataset for the supplied filter set.
  * The BFF returns the full calculation including supporting documents per row.
  */
 export async function fetchStockMovementVarianceReport(
-  filters: StockMovementVarianceFilters
+  filters: StockMovementVarianceFilters,
+  options?: FetchReportOptions
 ): Promise<StockMovementVarianceReportResponse> {
-  const url = `${BFF_BASE_URL}?${buildSearchParams(filters).toString()}`;
+  const params = buildSearchParams(filters);
+  if (options?.refresh) {
+    params.set("refresh", "1");
+  }
+  const url = `${BFF_BASE_URL}?${params.toString()}`;
 
-  const res = await fetch(url, { method: "GET", cache: "no-store" });
+  const res = await fetch(url, {
+    method: "GET",
+    cache: "no-store",
+    signal: options?.signal,
+  });
   const payload = (await res.json().catch(() => null)) as
     | StockMovementVarianceReportResponse
     | { ok?: false; error?: string; message?: string }

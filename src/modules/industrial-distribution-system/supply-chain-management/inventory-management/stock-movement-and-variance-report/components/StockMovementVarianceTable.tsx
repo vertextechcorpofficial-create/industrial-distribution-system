@@ -425,10 +425,10 @@ export function StockMovementVarianceTable() {
         </div>
       ) : null}
 
-      {/* ── Page controls: only once the lines really overflow one page ────── */}
-      {totalPages > 1 ? (
+      {/* ── Page controls: visible whenever rows are loaded so page slicing is transparent ── */}
+      {report && sortedRows.length > 0 ? (
         <div className="flex flex-wrap items-center justify-between gap-2 border-t px-4 py-2.5 text-[11px] text-muted-foreground">
-          <div className="flex items-center gap-3">
+          <div className="flex flex-wrap items-center gap-3">
             <label className="flex items-center gap-1.5" htmlFor="smv-page-size">
               <span>Lines per page</span>
               <select
@@ -446,31 +446,37 @@ export function StockMovementVarianceTable() {
                 <option value={50}>50</option>
               </select>
             </label>
-            <span>Page {page} of {totalPages}</span>
+            <span className="tabular-nums">
+              Showing {(page - 1) * pageSize + 1}–
+              {Math.min(page * pageSize, sortedRows.length)} of {sortedRows.length} · Page {page} of{" "}
+              {totalPages}
+            </span>
           </div>
 
-          <div className="flex items-center gap-1">
-            <Button
-              type="button"
-              variant="outline"
-              size="sm"
-              className="h-7 text-[11px]"
-              disabled={page <= 1}
-              onClick={() => setCurrentPage(Math.max(1, page - 1))}
-            >
-              <span>Previous</span>
-            </Button>
-            <Button
-              type="button"
-              variant="outline"
-              size="sm"
-              className="h-7 text-[11px]"
-              disabled={page >= totalPages}
-              onClick={() => setCurrentPage(Math.min(totalPages, page + 1))}
-            >
-              <span>Next</span>
-            </Button>
-          </div>
+          {totalPages > 1 ? (
+            <div className="flex items-center gap-1">
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                className="h-7 text-[11px]"
+                disabled={page <= 1}
+                onClick={() => setCurrentPage(Math.max(1, page - 1))}
+              >
+                <span>Previous</span>
+              </Button>
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                className="h-7 text-[11px]"
+                disabled={page >= totalPages}
+                onClick={() => setCurrentPage(Math.min(totalPages, page + 1))}
+              >
+                <span>Next</span>
+              </Button>
+            </div>
+          ) : null}
         </div>
       ) : null}
     </motion.section>
