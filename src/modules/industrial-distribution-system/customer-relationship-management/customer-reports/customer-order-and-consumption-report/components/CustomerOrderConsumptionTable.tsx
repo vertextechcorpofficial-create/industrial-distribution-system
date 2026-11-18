@@ -18,8 +18,7 @@ import {
   ChevronLeft,
   ChevronRight,
   ExternalLink,
-  Layers,
-  Search,
+  Layers
 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -47,7 +46,7 @@ import {
 } from "../services/customer-order-consumption.helpers";
 import type {
   CustomerOrderConsumptionRow,
-  ProductConsumptionSummary,
+
 } from "../types/customer-order-consumption.types";
 
 const PAGE_SIZE_OPTIONS = [10, 25, 50, 100];

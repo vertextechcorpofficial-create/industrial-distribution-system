@@ -23,7 +23,6 @@ import {
   FileText,
   Filter,
   Loader2,
-  Printer,
   RefreshCw,
   RotateCcw,
   Search,
@@ -47,10 +46,8 @@ import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover
 import { cn } from "@/lib/utils";
 import { useConsumptionFilterOptions } from "../hooks/useConsumptionFilterOptions";
 import { useCustomerOrderConsumptionReport } from "../hooks/useCustomerOrderConsumptionReport";
-import {
-  downloadCustomerOrderConsumptionPdf,
-  printCustomerOrderConsumptionPdf,
-} from "../services/customer-order-consumption.pdf";
+// Only import PDF download helper now that direct print action is removed from the toolbar
+import { downloadCustomerOrderConsumptionPdf } from "../services/customer-order-consumption.pdf";
 import { downloadCustomerOrderConsumptionExcel } from "../services/customer-order-consumption.xlsx";
 import type {
   AppliedFilterContext,
@@ -651,29 +648,7 @@ export function CustomerOrderConsumptionFilters(): React.ReactElement {
     }, 60);
   }, [report, feedback.pdf, setButtonState]);
 
-  // Print handler: opens print-ready landscape PDF preview (with browser print fallback)
-  const handlePrint = React.useCallback(() => {
-    if (!report || feedback.print === "loading") return;
-    setButtonState("print", "loading");
-
-    window.setTimeout(() => {
-      try {
-        const mode = printCustomerOrderConsumptionPdf(report);
-        setButtonState("print", "success");
-        toast.success(
-          mode === "pdf_window" ? "Print preview opened" : "Print dialog opened",
-          {
-            description: "Formatted landscape A4 report ready for printing.",
-          }
-        );
-      } catch (err) {
-        console.error("[CustomerOrderConsumption] Print error:", err);
-        setButtonState("print", "idle");
-        toast.error("Failed to prepare printable report.");
-      }
-    }, 60);
-  }, [report, feedback.print, setButtonState]);
-
+  
   return (
     <Card className="relative overflow-hidden border bg-card/85 shadow-xs transition-all duration-300">
       {/* Top-edge indeterminate progress shimmer while a report query is running */}

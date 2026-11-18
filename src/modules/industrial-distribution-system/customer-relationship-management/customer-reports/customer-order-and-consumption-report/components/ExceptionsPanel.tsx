@@ -21,7 +21,7 @@ import {
 } from "@/components/ui/table";
 import { useCustomerOrderConsumptionReport } from "../hooks/useCustomerOrderConsumptionReport";
 import { formatKgCompact, formatQty } from "../services/customer-order-consumption.helpers";
-import type { ExceptionCode, ReportException } from "../types/customer-order-consumption.types";
+import type { ExceptionCode} from "../types/customer-order-consumption.types";
 
 function SeverityBadge({ code }: { code: ExceptionCode }) {
   if (code === "RETURN_EXCEEDS_FULFILLED") {

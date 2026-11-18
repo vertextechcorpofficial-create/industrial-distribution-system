@@ -35,7 +35,7 @@ import {
 } from "./customer-order-consumption.lpg-calc";
 import {
   computeReturnRate,
-  dateOnly,
+
   isTruthyFlag,
   monthKey,
   normalizeStatus,

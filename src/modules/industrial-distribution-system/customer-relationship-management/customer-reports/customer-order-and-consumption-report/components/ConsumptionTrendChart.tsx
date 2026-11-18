@@ -24,7 +24,7 @@ import {
 } from "recharts";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { useCustomerOrderConsumptionReport } from "../hooks/useCustomerOrderConsumptionReport";
-import { formatAmount, formatKgCompact, formatQty } from "../services/customer-order-consumption.helpers";
+import { formatKgCompact, formatQty } from "../services/customer-order-consumption.helpers";
 
 const COLORS = ["#2563eb", "#16a34a", "#ea580c", "#8b5cf6", "#06b6d4"];
 
@@ -79,13 +79,15 @@ export function ConsumptionTrendChart(): React.ReactElement {
       }
     }
 
+    // Project explicit fields so internal orderKeys Set is excluded without unused destructuring bindings
     return [...map.values()]
       .sort((a, b) => a.month.localeCompare(b.month))
-      .map(({ orderKeys: _ignored, ...rest }) => ({
-        ...rest,
-        cylinderKg: Math.round(rest.cylinderKg * 100) / 100,
-        lpgKg: Math.round(rest.lpgKg * 100) / 100,
-        totalNetKg: Math.round(rest.totalNetKg * 100) / 100,
+      .map((entry) => ({
+        month: entry.month,
+        cylinderKg: Math.round(entry.cylinderKg * 100) / 100,
+        lpgKg: Math.round(entry.lpgKg * 100) / 100,
+        totalNetKg: Math.round(entry.totalNetKg * 100) / 100,
+        orderCount: entry.orderCount,
       }));
   }, [monthlyTrend]);
 
@@ -152,10 +154,12 @@ export function ConsumptionTrendChart(): React.ReactElement {
                     tickFormatter={(val) => `${val}`}
                   />
                   <Tooltip
-                    formatter={(val: any, name: any) => {
-                      const num = typeof val === "number" ? val : Number(val || 0);
-                      if (name === "Order Frequency") return [formatQty(num), name];
-                      return [formatKgCompact(num), name ?? "Weight"];
+                    // Let Recharts infer formatter value/name types to avoid explicit any
+                    formatter={(val, name) => {
+                      const num = typeof val === "number" ? val : Number(val ?? 0);
+                      const label = name !== undefined ? String(name) : "Weight";
+                      if (label === "Order Frequency") return [formatQty(num), label];
+                      return [formatKgCompact(num), label];
                     }}
                   />
                   <Legend wrapperStyle={{ fontSize: 12, paddingTop: 10 }} />
@@ -232,7 +236,8 @@ export function ConsumptionTrendChart(): React.ReactElement {
                         <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
                       ))}
                     </Pie>
-                    <Tooltip formatter={(val: any) => formatKgCompact(Number(val) || 0)} />
+                    {/* Format pie tooltip weight using Recharts' inferred value type */}
+                    <Tooltip formatter={(val) => formatKgCompact(Number(val) || 0)} />
                     <Legend wrapperStyle={{ fontSize: 11 }} />
                   </PieChart>
                 </ResponsiveContainer>

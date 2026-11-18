@@ -8,8 +8,8 @@
 "use client";
 
 import * as React from "react";
-import { CalendarRange, Clock, Loader2, ShieldCheck } from "lucide-react";
-import { Badge } from "@/components/ui/badge";
+import { CalendarRange, Clock, Loader2 } from "lucide-react";
+
 import { useCustomerOrderConsumptionReport } from "../hooks/useCustomerOrderConsumptionReport";
 
 /** Formats an ISO date string (YYYY-MM-DD) into a concise human-readable label (e.g. Jan 01, 2026). */
@@ -37,17 +37,24 @@ function formatGeneratedTime(isoTimestamp: string): string {
 export function CustomerOrderConsumptionHeader(): React.ReactElement {
   const { report, appliedFilters, isLoading } = useCustomerOrderConsumptionReport();
 
+  // Extract primitive fields before useMemo so React Compiler can preserve manual memoization dependencies
+  const reportStartDate = report?.filters.startDate;
+  const reportEndDate = report?.filters.endDate;
+  const appliedStartDate = appliedFilters?.startDate;
+  const appliedEndDate = appliedFilters?.endDate;
+  const generatedAt = report?.generatedAt;
+
   const windowLabel = React.useMemo(() => {
-    const start = report?.filters.startDate ?? appliedFilters?.startDate;
-    const end = report?.filters.endDate ?? appliedFilters?.endDate;
+    const start = reportStartDate ?? appliedStartDate;
+    const end = reportEndDate ?? appliedEndDate;
     if (!start || !end) return null;
     return `${formatShortDateLabel(start)} – ${formatShortDateLabel(end)}`;
-  }, [report?.filters.startDate, report?.filters.endDate, appliedFilters?.startDate, appliedFilters?.endDate]);
+  }, [reportStartDate, reportEndDate, appliedStartDate, appliedEndDate]);
 
   const updatedLabel = React.useMemo(() => {
-    if (!report?.generatedAt) return null;
-    return formatGeneratedTime(report.generatedAt);
-  }, [report?.generatedAt]);
+    if (!generatedAt) return null;
+    return formatGeneratedTime(generatedAt);
+  }, [generatedAt]);
 
   return (
     <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between border-b pb-4">

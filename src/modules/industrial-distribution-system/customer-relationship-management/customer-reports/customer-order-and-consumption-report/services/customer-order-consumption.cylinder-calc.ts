@@ -8,12 +8,12 @@
 // ============================================================
 
 import type {
-  ConsumptionChannel,
+
   RawCategoryRow,
   RawProductRow,
   ReportException,
 } from "../types/customer-order-consumption.types";
-import { isTruthyFlag, safeRatio, toNumber } from "./customer-order-consumption.helpers";
+import { isTruthyFlag, toNumber } from "./customer-order-consumption.helpers";
 
 export function parseCategorySizeKg(
   text: string | null | undefined

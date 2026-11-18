@@ -5,9 +5,9 @@
 // ============================================================
 
 import type {
-  CustomerOrderConsumptionReportResponse,
+
   CustomerOrderConsumptionRow,
-  ProductConsumptionSummary,
+
   ReportException,
 } from "../types/customer-order-consumption.types";
 

@@ -46,7 +46,8 @@ async function readJson<T>(response: Response): Promise<T> {
   let payload: unknown;
   try {
     payload = await response.json();
-  } catch (error) {
+  } catch {
+    // Throw a structured API error when the server returns non-JSON content (e.g. proxy HTML error page)
     throw new CustomerOrderConsumptionApiError(
       "NON_JSON_RESPONSE",
       "The server returned an unreadable response.",
