@@ -196,7 +196,7 @@ export function DeliverPerformanceCharts() {
   const topDrivers = charts?.topDrivers || [];
 
   return (
-    <div className="grid grid-cols-1 gap-3 lg:grid-cols-3">
+    <div className={`grid grid-cols-1 gap-3 lg:grid-cols-3 transition-opacity duration-150 ${loading ? "opacity-75" : "opacity-100"}`}>
       {/* 1. Fulfillment Trends (cursor={false} removes gray shine on hover) */}
       <Card className="lg:col-span-2 shadow-xs border-border">
         <CardHeader className="py-2.5 px-3 border-b border-border/50">
