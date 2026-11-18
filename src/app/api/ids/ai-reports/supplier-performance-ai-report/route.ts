@@ -125,7 +125,18 @@ export async function GET(req: NextRequest) {
             isPosted: number;
         }>('purchase_order_receiving', 'limit=-1');
 
-        // 5. Fetch Posted Return to Supplier (RTS) headers and items
+        // 5. Fetch Posted Return to Supplier (RTS) headers and items scoped by branch and date
+        let rtsFilter = 'filter[is_posted][_eq]=1&limit=-1';
+        if (branchId) {
+            rtsFilter += `&filter[branch_id][_eq]=${encodeURIComponent(branchId)}`;
+        }
+        if (startDate) {
+            rtsFilter += `&filter[transaction_date][_gte]=${encodeURIComponent(startDate)}`;
+        }
+        if (endDate) {
+            rtsFilter += `&filter[transaction_date][_lte]=${encodeURIComponent(endDate)}`;
+        }
+
         const rtsList = await fetchDirectusCollection<{
             id: number;
             doc_no: string;
@@ -134,7 +145,7 @@ export async function GET(req: NextRequest) {
             transaction_date: string;
             remarks: string | null;
             is_posted: number;
-        }>('return_to_supplier', 'filter[is_posted][_eq]=1&limit=-1');
+        }>('return_to_supplier', rtsFilter);
 
         const rtsItems = await fetchDirectusCollection<{
             rts_id: number;
@@ -276,12 +287,15 @@ export async function GET(req: NextRequest) {
             const rtsRemarks = rtsLogs.map((r) => r.reason).filter(Boolean);
 
             const otifPercentage = totalOrdersDue > 0 ? Math.round((otifOrders / totalOrdersDue) * 100) : null;
-            const rejectionRatePercentage =
+            // Cap rejection rate to strictly <= 100% (EU Quality Standard)
+            const rawRejectionPct =
                 totalReceivedQuantity > 0
-                    ? Number(((totalReturnedQuantity / totalReceivedQuantity) * 100).toFixed(2))
+                    ? (totalReturnedQuantity / totalReceivedQuantity) * 100
                     : totalReturnedQuantity > 0
                     ? 100
                     : null;
+            const rejectionRatePercentage =
+                rawRejectionPct !== null ? Number(Math.min(100, rawRejectionPct).toFixed(2)) : null;
             const averageCostVariancePercentage =
                 costVarianceCount > 0 ? Number((costVarianceSum / costVarianceCount).toFixed(2)) : 0;
 
@@ -348,9 +362,10 @@ export async function GET(req: NextRequest) {
         const averageRejectionRate =
             validRejectionRows.length > 0
                 ? Number(
-                      (
+                      Math.min(
+                          100,
                           validRejectionRows.reduce((a, b) => a + (b.rejectionRatePercentage || 0), 0) /
-                          validRejectionRows.length
+                              validRejectionRows.length
                       ).toFixed(2)
                   )
                 : null;
@@ -367,11 +382,79 @@ export async function GET(req: NextRequest) {
             dataFreshnessTimestamp: new Date().toISOString(),
         };
 
-        const userTier = {
+        // 6. Dynamically resolve AI Tier configuration from Directus 'modules' collection
+        let userTier = {
             tierLevel: 3,
             tierSlug: 'executive' as AiTierSlug,
             tierName: 'Executive',
         };
+
+        try {
+            // Query module configuration matching either slug variant
+            const moduleRows = await fetchDirectusCollection<Record<string, unknown>>(
+                'modules',
+                'filter[slug][_in]=supplier-performance-ai-reports,supplier-performance-ai-report&fields=id,slug,ai_tier.*'
+            );
+
+            const moduleRecord = moduleRows[0];
+            if (moduleRecord && moduleRecord.ai_tier) {
+                const aiTierVal = moduleRecord.ai_tier;
+                if (typeof aiTierVal === 'object' && aiTierVal !== null) {
+                    const tierObj = aiTierVal as Record<string, unknown>;
+                    const rawLevel = Number(tierObj.tier_level);
+                    const rawSlug = String(tierObj.slug || '').toLowerCase();
+                    const rawName = String(tierObj.name || '');
+
+                    const tierSlug: AiTierSlug =
+                        rawSlug === 'pro' || rawLevel === 2
+                            ? 'pro'
+                            : rawSlug === 'basic' || rawLevel === 1
+                            ? 'basic'
+                            : 'executive';
+
+                    const tierName =
+                        rawName || (tierSlug === 'pro' ? 'Pro' : tierSlug === 'basic' ? 'Basic' : 'Executive');
+                    const tierLevel = tierSlug === 'executive' ? 3 : tierSlug === 'pro' ? 2 : 1;
+
+                    userTier = {
+                        tierLevel,
+                        tierSlug,
+                        tierName,
+                    };
+                } else if (typeof aiTierVal === 'number' || typeof aiTierVal === 'string') {
+                    // Foreign key is stored as ID, fetch ai_tier collection directly
+                    const tierRows = await fetchDirectusCollection<Record<string, unknown>>(
+                        'ai_tier',
+                        `filter[id][_eq]=${encodeURIComponent(String(aiTierVal))}&fields=*`
+                    );
+                    const tierObj = tierRows[0];
+                    if (tierObj) {
+                        const rawLevel = Number(tierObj.tier_level);
+                        const rawSlug = String(tierObj.slug || '').toLowerCase();
+                        const rawName = String(tierObj.name || '');
+
+                        const tierSlug: AiTierSlug =
+                            rawSlug === 'pro' || rawLevel === 2
+                                ? 'pro'
+                                : rawSlug === 'basic' || rawLevel === 1
+                                ? 'basic'
+                                : 'executive';
+
+                        const tierName =
+                            rawName || (tierSlug === 'pro' ? 'Pro' : tierSlug === 'basic' ? 'Basic' : 'Executive');
+                        const tierLevel = tierSlug === 'executive' ? 3 : tierSlug === 'pro' ? 2 : 1;
+
+                        userTier = {
+                            tierLevel,
+                            tierSlug,
+                            tierName,
+                        };
+                    }
+                }
+            }
+        } catch (tierErr) {
+            console.warn('[SupplierPerformance] Could not resolve ai_tier dynamically, defaulting to Executive:', tierErr);
+        }
 
         const responsePayload: SupplierPerformanceReportPayload = {
             filter: { startDate, endDate, branchId, supplierId },

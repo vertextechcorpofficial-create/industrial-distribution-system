@@ -80,6 +80,42 @@ export interface ExecutivePillar {
     findings: string;
 }
 
+export interface AIObservation {
+    id: string;
+    type?: 'fact' | 'hypothesis' | 'estimate';
+    category?: string;
+    finding: string;
+    supportingEvidence?: string;
+    impactLevel?: 'low' | 'medium' | 'high';
+    recommendedAction?: string;
+    suggestedOwner?: string;
+    department?: string;
+}
+
+export interface ExecutiveReportSectionData {
+    reportTitle: string;
+    preparedBy: string;
+    focus: string;
+    executiveSummary: string;
+    metricsTable: Array<{
+        category: string;
+        actual: string;
+        target: string;
+        status: string;
+    }>;
+    bottleneckFindings: {
+        highEfficiency: string[];
+        primaryBottlenecks: string[];
+        criticalDelays: string[];
+    };
+    keyTakeaways: string[];
+    strategicRecommendations: Array<{
+        title: string;
+        description: string;
+        owner?: string;
+    }>;
+}
+
 export interface ChatMessage {
     id: string;
     role: 'user' | 'assistant';
@@ -92,9 +128,15 @@ export interface AiInsightResponse {
     tierName: string;
     model: string;
     summary: string;
+    // Tier 1: 2-4 Bullets
+    keyHighlights?: string[];
+    // Tier 2: Narrative + Risks & Actions
+    detailedAnalysis?: string;
+    keyExposures?: (string | AIObservation)[];
+    strategicActions?: (string | AIObservation)[];
+    // Tier 3: 4-Section C-Suite Report + Backward-compatible Pillars
+    executiveReport?: ExecutiveReportSectionData;
     executivePillars?: ExecutivePillar[];
-    keyExposures: string[];
-    strategicActions: string[];
     negotiationNotes?: string[];
     userQuery?: string;
     qaAnswer?: string;

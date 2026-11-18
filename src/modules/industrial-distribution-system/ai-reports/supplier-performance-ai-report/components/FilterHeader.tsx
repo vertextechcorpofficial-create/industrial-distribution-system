@@ -10,9 +10,10 @@
 
 'use client';
 
-import React from 'react';
+import React, { useMemo } from 'react';
 import { SupplierPerformanceFilter } from '../types';
 import { Sparkles, Filter, RefreshCw, Printer, Search } from 'lucide-react';
+import { SearchableSelect } from '@/components/ui/searchable-select';
 
 interface FilterHeaderProps {
     filter: SupplierPerformanceFilter;
@@ -39,6 +40,17 @@ export const FilterHeader: React.FC<FilterHeaderProps> = ({
     isReportLoading,
     branches,
 }) => {
+    // Format branches into SearchableSelect option shape
+    const branchOptions = useMemo(() => {
+        return [
+            { value: '', label: 'All Branches' },
+            ...branches.map((b) => ({
+                value: String(b.id),
+                label: b.branch_name,
+            })),
+        ];
+    }, [branches]);
+
     return (
         <div className="bg-card border border-border rounded-xl p-5 shadow-xs space-y-4">
             <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4">
@@ -85,7 +97,7 @@ export const FilterHeader: React.FC<FilterHeaderProps> = ({
                 </div>
             </div>
 
-            {/* Filter Controls Row: Searchbar is at Column 1 (Start of the Row) */}
+            {/* Filter Controls Row: Searchbar is at Column 1, Branch is immediately next at Column 2 */}
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3 pt-2 border-t border-border/60">
                 {/* 1. Search Bar at Start */}
                 <div>
@@ -97,48 +109,43 @@ export const FilterHeader: React.FC<FilterHeaderProps> = ({
                             placeholder="Type vendor name..."
                             value={searchTerm}
                             onChange={(e) => onSearchChange(e.target.value)}
-                            className="w-full text-xs pl-8 pr-3 py-2 rounded-lg border border-input bg-background text-foreground focus:outline-hidden focus:ring-1 focus:ring-ring"
+                            className="w-full text-xs pl-8 pr-3 py-2 rounded-lg border border-input bg-background text-foreground focus:outline-hidden focus:ring-1 focus:ring-ring h-9"
                         />
                     </div>
                 </div>
 
-                {/* 2. Start Date */}
+                {/* 2. Branch Searchable Select (Moved to the right of Search Supplier) */}
+                <div>
+                    <label className="block text-[11px] font-semibold text-muted-foreground mb-1">Branch</label>
+                    <SearchableSelect
+                        options={branchOptions}
+                        value={filter.branchId ? String(filter.branchId) : ''}
+                        onValueChange={(val) => onFilterChange({ ...filter, branchId: val || undefined })}
+                        placeholder="All Branches"
+                        className="h-9 text-xs"
+                    />
+                </div>
+
+                {/* 3. Start Date */}
                 <div>
                     <label className="block text-[11px] font-semibold text-muted-foreground mb-1">Start Date</label>
                     <input
                         type="date"
                         value={filter.startDate || ''}
                         onChange={(e) => onFilterChange({ ...filter, startDate: e.target.value })}
-                        className="w-full text-xs px-3 py-2 rounded-lg border border-input bg-background text-foreground focus:outline-hidden focus:ring-1 focus:ring-ring"
+                        className="w-full text-xs px-3 py-2 rounded-lg border border-input bg-background text-foreground focus:outline-hidden focus:ring-1 focus:ring-ring h-9"
                     />
                 </div>
 
-                {/* 3. End Date */}
+                {/* 4. End Date */}
                 <div>
                     <label className="block text-[11px] font-semibold text-muted-foreground mb-1">End Date</label>
                     <input
                         type="date"
                         value={filter.endDate || ''}
                         onChange={(e) => onFilterChange({ ...filter, endDate: e.target.value })}
-                        className="w-full text-xs px-3 py-2 rounded-lg border border-input bg-background text-foreground focus:outline-hidden focus:ring-1 focus:ring-ring"
+                        className="w-full text-xs px-3 py-2 rounded-lg border border-input bg-background text-foreground focus:outline-hidden focus:ring-1 focus:ring-ring h-9"
                     />
-                </div>
-
-                {/* 4. Branch */}
-                <div>
-                    <label className="block text-[11px] font-semibold text-muted-foreground mb-1">Branch</label>
-                    <select
-                        value={filter.branchId || ''}
-                        onChange={(e) => onFilterChange({ ...filter, branchId: e.target.value })}
-                        className="w-full text-xs px-3 py-2 rounded-lg border border-input bg-background text-foreground focus:outline-hidden focus:ring-1 focus:ring-ring"
-                    >
-                        <option value="">All Branches</option>
-                        {branches.map((b) => (
-                            <option key={b.id} value={b.id}>
-                                {b.branch_name}
-                            </option>
-                        ))}
-                    </select>
                 </div>
 
                 {/* 5. Apply Filters */}
@@ -146,7 +153,7 @@ export const FilterHeader: React.FC<FilterHeaderProps> = ({
                     <button
                         type="button"
                         onClick={onRefresh}
-                        className="w-full inline-flex items-center justify-center gap-1.5 px-3 py-2 text-xs font-medium rounded-lg bg-muted text-muted-foreground hover:text-foreground hover:bg-muted/80 transition-colors"
+                        className="w-full inline-flex items-center justify-center gap-1.5 px-3 py-2 text-xs font-medium rounded-lg bg-muted text-muted-foreground hover:text-foreground hover:bg-muted/80 transition-colors h-9"
                     >
                         <Filter className="h-3.5 w-3.5" />
                         Apply Filters

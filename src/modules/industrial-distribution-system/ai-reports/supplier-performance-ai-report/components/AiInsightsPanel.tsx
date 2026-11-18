@@ -242,14 +242,17 @@ export const AiInsightsPanel: React.FC<AiInsightsPanelProps> = ({
                                 KEY EXPOSURES & RISKS
                             </div>
                             <ul className="space-y-2 text-xs text-foreground/85 pl-2">
-                                {aiInsight.keyExposures.map((exp, idx) => (
-                                    <li key={idx} className="flex items-start gap-2">
-                                        <span className="text-muted-foreground mt-0.5">•</span>
-                                        <span className="leading-snug">
-                                            <ReactMarkdown>{exp}</ReactMarkdown>
-                                        </span>
-                                    </li>
-                                ))}
+                                {(aiInsight.keyExposures || []).map((exp, idx) => {
+                                    const text = typeof exp === 'object' && exp !== null ? exp.finding : String(exp);
+                                    return (
+                                        <li key={idx} className="flex items-start gap-2">
+                                            <span className="text-muted-foreground mt-0.5">•</span>
+                                            <span className="leading-snug">
+                                                <ReactMarkdown>{text}</ReactMarkdown>
+                                            </span>
+                                        </li>
+                                    );
+                                })}
                             </ul>
                         </div>
 
@@ -260,14 +263,17 @@ export const AiInsightsPanel: React.FC<AiInsightsPanelProps> = ({
                                 STRATEGIC ACTIONS
                             </div>
                             <ul className="space-y-2 text-xs text-foreground/85 pl-2">
-                                {aiInsight.strategicActions.map((act, idx) => (
-                                    <li key={idx} className="flex items-start gap-2">
-                                        <span className="text-muted-foreground mt-0.5">•</span>
-                                        <span className="leading-snug">
-                                            <ReactMarkdown>{act}</ReactMarkdown>
-                                        </span>
-                                    </li>
-                                ))}
+                                {(aiInsight.strategicActions || []).map((act, idx) => {
+                                    const text = typeof act === 'object' && act !== null ? act.recommendedAction || act.finding : String(act);
+                                    return (
+                                        <li key={idx} className="flex items-start gap-2">
+                                            <span className="text-muted-foreground mt-0.5">•</span>
+                                            <span className="leading-snug">
+                                                <ReactMarkdown>{text}</ReactMarkdown>
+                                            </span>
+                                        </li>
+                                    );
+                                })}
                             </ul>
                         </div>
                     </div>
