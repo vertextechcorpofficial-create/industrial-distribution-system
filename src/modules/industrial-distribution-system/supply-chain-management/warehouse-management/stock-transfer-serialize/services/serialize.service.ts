@@ -49,9 +49,13 @@ export async function lookupSerial(serialNumber: string, branchId?: number, toke
     throw new SerialValidationError(`Product details for serial '${trimmed}' not found.`);
   }
 
+  // AG-COMMENT: Include parent_id from v_serial_onhand or product details for cylinder family matching
+  const resolvedParentId = match.parent_id || (product as { parent_id?: number | null }).parent_id || undefined;
+
   return {
     serialNumber: match.serial_number,
     productId: product.product_id,
+    parentId: resolvedParentId ? Number(resolvedParentId) : undefined,
     productName: product.product_name,
     barcode: product.barcode || product.product_code || String(product.product_id),
     unitPrice: product.price_per_unit || product.cost_per_unit || 0,

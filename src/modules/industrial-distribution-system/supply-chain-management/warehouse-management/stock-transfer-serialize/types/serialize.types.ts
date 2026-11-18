@@ -11,14 +11,26 @@ export interface StockTransferSerialRow {
   
   // View specific fields (v_serial_onhand)
   product_id?: number;
+  parent_id?: number;
   branch_id?: number;
   qty_onhand?: number;
+}
+
+/** Raw view row or Spring Boot DTO for v_serial_onhand */
+export interface SerialOnhandRow {
+  serial_number: string;
+  product_id?: number;
+  parent_id?: number;
+  branch_id?: number;
+  qty_onhand?: number;
+  [key: string]: unknown;
 }
 
 /** Response from the Serial lookup action. */
 export interface SerialLookupResponse {
   serialNumber: string;
   productId: number;
+  parentId?: number;
   productName: string;
   barcode: string;
   unitPrice: number;
