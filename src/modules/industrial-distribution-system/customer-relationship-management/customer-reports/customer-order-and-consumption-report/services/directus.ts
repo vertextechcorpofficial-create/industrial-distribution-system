@@ -1,8 +1,7 @@
+// src/modules/industrial-distribution-system/customer-relationship-management/customer-reports/customer-order-and-consumption-report/services/directus.ts
 // ============================================================
-// directus.ts
-// Minimal Directus REST client for this report. Server-side only: the
-// static token must never reach the browser.
-// Kept deliberately small — one GET, one projection, one filter object.
+// Directus REST client helper for the Customer Order & Consumption Report.
+// Server-side only: token stays on the server.
 // ============================================================
 
 import {
@@ -25,11 +24,6 @@ export interface DirectusFetchOptions {
   signal?: AbortSignal;
 }
 
-/**
- * Reads the Directus endpoint from the environment.
- * `NEXT_PUBLIC_API_BASE_URL` is sometimes stored without a scheme, which is
- * why the bare host:port case is normalised instead of rejected.
- */
 export function resolveDirectusConfig(
   env: NodeJS.ProcessEnv = process.env
 ): DirectusConfig {
@@ -46,7 +40,7 @@ export function resolveDirectusConfig(
 
   if (!raw) {
     throw new Error(
-      "NEXT_PUBLIC_API_BASE_URL is not configured. Cannot fetch the Customer Order & Consumption Report."
+      "Directus URL is not configured. Cannot fetch Customer Order & Consumption Report."
     );
   }
 
@@ -67,16 +61,10 @@ function buildUrl(
     url.searchParams.set("filter", JSON.stringify(options.filter));
   }
   if (options.sort) url.searchParams.set("sort", options.sort);
-  // Directus defaults to a 100-row page; a report needs the whole set.
   url.searchParams.set("limit", String(options.limit ?? -1));
   return url.toString();
 }
 
-/**
- * GETs one collection and returns its rows.
- * A non-array `data` payload is a contract break, not an empty result, so it
- * throws instead of silently reporting zero demand.
- */
 export async function fetchDirectusRows<T>(
   collection: string,
   options: DirectusFetchOptions,
@@ -112,7 +100,7 @@ export async function fetchDirectusRows<T>(
   } catch (error) {
     if (isAbortError(error)) throw error;
     throw new UpstreamContractError(
-      `Directus collection ${collection} returned a non-JSON response.`
+      `Directus collection ${collection} returned non-JSON response.`
     );
   }
 
@@ -126,10 +114,6 @@ export async function fetchDirectusRows<T>(
   return data as T[];
 }
 
-/**
- * Runs one request per chunk. MySQL has no limit on the number of `_in`
- * values, but the URL does — 500 ids keeps every request well under it.
- */
 export function chunk<T>(items: T[], size = 500): T[][] {
   if (items.length === 0) return [];
   const batches: T[][] = [];

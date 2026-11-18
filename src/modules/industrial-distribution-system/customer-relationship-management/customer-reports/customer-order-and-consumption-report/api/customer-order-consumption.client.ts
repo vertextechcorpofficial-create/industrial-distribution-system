@@ -1,7 +1,7 @@
+// src/modules/industrial-distribution-system/customer-relationship-management/customer-reports/customer-order-and-consumption-report/api/customer-order-consumption.client.ts
 // ============================================================
-// customer-order-consumption.client.ts
-// Browser-side calls to the BFF routes. The Directus token lives only on
-// the server, so this file knows endpoints and shapes and nothing else.
+// Browser-side API client for Customer Order & Consumption Report.
+// No direct DB or Directus tokens exposed in browser.
 // ============================================================
 
 import type {
@@ -9,13 +9,12 @@ import type {
   CustomerOrderConsumptionDetail,
   CustomerOrderConsumptionReportResponse,
   ReportLookupOption,
+  ReportLookupResponse,
 } from "../types/customer-order-consumption.types";
 
-const REPORT_ENDPOINT =
-  "/api/ids/crm/customer-reports/customer-order-and-consumption-report";
+const REPORT_ENDPOINT = "/api/ids/crm/customer-reports/customer-order-and-consumption-report";
 const LOOKUP_ENDPOINT = `${REPORT_ENDPOINT}/lookups`;
 
-/** Carries the BFF error code so the UI can word a retry vs a rejection. */
 export class CustomerOrderConsumptionApiError extends Error {
   readonly code: string;
   readonly status: number;
@@ -28,25 +27,17 @@ export class CustomerOrderConsumptionApiError extends Error {
   }
 }
 
-type QueryValue = string | number | readonly (string | number)[] | undefined;
+type QueryValue = string | number | readonly (string | number)[] | undefined | null;
 
-/**
- * A selection list becomes the same key repeated, which is what the BFF
- * collects back into an array. An empty list is omitted entirely: "nothing
- * picked" and "no filter" are the same request.
- */
 function buildQuery(values: Record<string, QueryValue>): string {
   const params = new URLSearchParams();
   for (const [key, value] of Object.entries(values)) {
-    if (Array.isArray(value)) {
-      for (const item of value) {
-        if (String(item).trim() === "") continue;
-        params.append(key, String(item));
-      }
-      continue;
+    if (value === undefined || value === null) continue;
+    const items = Array.isArray(value) ? value : [value];
+    for (const item of items) {
+      const text = String(item).trim();
+      if (text) params.append(key, text);
     }
-    if (value === undefined || value === null || value === "") continue;
-    params.set(key, String(value));
   }
   return params.toString();
 }
@@ -55,19 +46,19 @@ async function readJson<T>(response: Response): Promise<T> {
   let payload: unknown;
   try {
     payload = await response.json();
-  } catch {
+  } catch (error) {
     throw new CustomerOrderConsumptionApiError(
-      "INVALID_RESPONSE",
-      "The report service returned a response that could not be read.",
+      "NON_JSON_RESPONSE",
+      "The server returned an unreadable response.",
       response.status
     );
   }
 
   if (!response.ok) {
-    const body = payload as { code?: string; message?: string } | null;
+    const errorPayload = payload as { code?: string; message?: string };
     throw new CustomerOrderConsumptionApiError(
-      body?.code ?? "REPORT_FAILED",
-      body?.message ?? `Request failed with status ${response.status}.`,
+      errorPayload.code ?? "REQUEST_FAILED",
+      errorPayload.message ?? "Failed to fetch report data.",
       response.status
     );
   }
@@ -75,10 +66,9 @@ async function readJson<T>(response: Response): Promise<T> {
   return payload as T;
 }
 
-/** Requests the full report for one applied filter set. */
-export async function requestCustomerOrderConsumptionReport(
+export async function fetchCustomerOrderConsumptionReportClient(
   filters: AppliedFilterContext,
-  signal?: AbortSignal
+  options: { signal?: AbortSignal } = {}
 ): Promise<CustomerOrderConsumptionReportResponse> {
   const query = buildQuery({
     startDate: filters.startDate,
@@ -87,62 +77,63 @@ export async function requestCustomerOrderConsumptionReport(
     branchIds: filters.branchIds,
     salesmanIds: filters.salesmanIds,
     classificationIds: filters.classificationIds,
+    categoryIds: filters.categoryIds,
     channel: filters.channel,
+    search: filters.search,
     customerLabels: filters.customerLabels,
     branchLabels: filters.branchLabels,
     salesmanLabels: filters.salesmanLabels,
     classificationLabels: filters.classificationLabels,
+    categoryLabels: filters.categoryLabels,
   });
 
   const response = await fetch(`${REPORT_ENDPOINT}?${query}`, {
     method: "GET",
+    headers: { Accept: "application/json" },
     cache: "no-store",
-    signal,
+    signal: options.signal,
   });
 
   return readJson<CustomerOrderConsumptionReportResponse>(response);
 }
 
-/** Requests the supporting documents behind one customer row group. */
-export async function requestCustomerOrderConsumptionDetail(
+export async function fetchCustomerOrderConsumptionDetailClient(
   filters: AppliedFilterContext,
   customerCode: string,
-  signal?: AbortSignal
+  productId?: number,
+  options: { signal?: AbortSignal } = {}
 ): Promise<CustomerOrderConsumptionDetail> {
-  // The drill-down narrows the open report to one customer, so the customer
-  // multi-select is deliberately not forwarded — `customerDetail` wins.
   const query = buildQuery({
     startDate: filters.startDate,
     endDate: filters.endDate,
-    branchIds: filters.branchIds,
-    salesmanIds: filters.salesmanIds,
-    classificationIds: filters.classificationIds,
-    channel: filters.channel,
     customerDetail: customerCode,
+    productDetail: productId,
+    branchIds: filters.branchIds,
   });
 
   const response = await fetch(`${REPORT_ENDPOINT}?${query}`, {
     method: "GET",
+    headers: { Accept: "application/json" },
     cache: "no-store",
-    signal,
+    signal: options.signal,
   });
 
   return readJson<CustomerOrderConsumptionDetail>(response);
 }
 
-/** Requests filter-bar options for one whitelisted collection. */
-export async function requestReportLookupOptions(
-  type: "customers" | "branches" | "salesmen" | "classifications",
-  term?: string,
-  signal?: AbortSignal
+export async function fetchLookupOptionsClient(
+  type: "customer" | "branch" | "salesman" | "classification" | "category" | "product",
+  query?: string,
+  branchId?: number,
+  options: { signal?: AbortSignal } = {}
 ): Promise<ReportLookupOption[]> {
-  const query = buildQuery({ type, q: term?.trim().slice(0, 100) });
-  const response = await fetch(`${LOOKUP_ENDPOINT}?${query}`, {
+  const q = buildQuery({ type, query, branchId });
+  const response = await fetch(`${LOOKUP_ENDPOINT}?${q}`, {
     method: "GET",
-    cache: "no-store",
-    signal,
+    headers: { Accept: "application/json" },
+    signal: options.signal,
   });
 
-  const payload = await readJson<{ data?: ReportLookupOption[] }>(response);
+  const payload = await readJson<ReportLookupResponse>(response);
   return payload.data ?? [];
 }

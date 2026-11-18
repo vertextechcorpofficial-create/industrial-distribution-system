@@ -1,17 +1,24 @@
+// src/modules/industrial-distribution-system/customer-relationship-management/customer-reports/customer-order-and-consumption-report/components/CustomerOrderConsumptionKpis.tsx
+// ============================================================
+// Executive KPI metric cards with smooth motion transitions.
+// Channels kept distinct: Cylinder vs Metered LPG.
+// ============================================================
+
 "use client";
 
-// ============================================================
-// CustomerOrderConsumptionKpis.tsx
-// KPI band, grouped by channel. Cylinder kg and LPG kg sit in separate
-// cards on purpose — the ticket forbids one combined demand figure.
-// ============================================================
-
 import * as React from "react";
-import { AlertTriangle, Boxes, Flame, ListFilter } from "lucide-react";
-
-import { Button } from "@/components/ui/button";
+import { motion, type Variants } from "framer-motion";
+import {
+  AlertTriangle,
+  ArrowDownRight,
+  Cylinder,
+  Flame,
+  Layers,
+  Scale,
+  ShoppingBag,
+} from "lucide-react";
+import { Badge } from "@/components/ui/badge";
 import { Card, CardContent } from "@/components/ui/card";
-
 import { useCustomerOrderConsumptionReport } from "../hooks/useCustomerOrderConsumptionReport";
 import {
   formatAmount,
@@ -19,195 +26,173 @@ import {
   formatPercent,
   formatQty,
 } from "../services/customer-order-consumption.helpers";
-import type { ChannelTotals } from "../types/customer-order-consumption.types";
 
-interface KpiBandProps {
-  /** Jumps the tab band to the exception list; hidden when absent. */
-  onOpenExceptions?(): void;
-}
-
-interface ChannelCardProps {
-  title: string;
-  basis: string;
-  icon: React.ReactNode;
-  totals: ChannelTotals;
-}
-
-function Stat({
-  label,
-  value,
-  emphasis = false,
-}: {
-  label: string;
-  value: string;
-  emphasis?: boolean;
-}) {
-  return (
-    <div className="flex items-baseline justify-between gap-2 py-1">
-      <dt className="text-xs text-muted-foreground">{label}</dt>
-      <dd
-        className={
-          emphasis
-            ? "text-sm font-semibold tabular-nums"
-            : "text-sm tabular-nums"
-        }
-      >
-        {value}
-      </dd>
-    </div>
-  );
-}
-
-function ChannelCard({ title, basis, icon, totals }: ChannelCardProps) {
-  const active = totals.customers > 0 || totals.orders > 0 || totals.netKg !== 0;
-
-  return (
-    <Card className="border-border/80">
-      <CardContent className="space-y-2 px-4 py-3">
-        <div className="flex items-center justify-between gap-2">
-          <div className="flex min-w-0 items-center gap-2 text-xs font-semibold uppercase tracking-wider text-muted-foreground">
-            {icon}
-            <span className="truncate">{title}</span>
-          </div>
-          <span className="shrink-0 rounded-full bg-muted px-2 py-0.5 text-[10px] font-medium text-muted-foreground">
-            {basis}
-          </span>
-        </div>
-
-        {active ? (
-          <>
-            <div className="flex items-baseline gap-1.5">
-              <span
-                className={
-                  totals.netKg < 0
-                    ? "text-2xl font-semibold tabular-nums text-destructive"
-                    : "text-2xl font-semibold tabular-nums"
-                }
-              >
-                {formatKgCompact(totals.netKg)}
-              </span>
-              <span className="text-xs text-muted-foreground">
-                net kg{totals.netKg < 0 ? " — returns exceed demand" : ""}
-              </span>
-            </div>
-
-            <dl className="grid gap-x-6 border-t border-border/60 pt-1 sm:grid-cols-2">
-              <Stat label="Customers" value={formatQty(totals.customers)} />
-              <Stat label="Ordering events" value={formatQty(totals.orders)} />
-              <Stat label="Gross kg" value={formatKgCompact(totals.grossKg)} />
-              <Stat
-                label="Returned kg"
-                value={totals.returnedKg === 0 ? "—" : formatKgCompact(totals.returnedKg)}
-              />
-              <Stat
-                label="Avg net kg / event"
-                value={totals.orders === 0 ? "—" : formatKgCompact(totals.avgOrderSizeKg)}
-              />
-              <Stat label="Return rate" value={formatPercent(totals.returnRatePct)} />
-              <Stat label="Gross pieces" value={formatQty(totals.grossQty)} />
-              <Stat label="Net amount" value={formatAmount(totals.netAmount)} emphasis />
-            </dl>
-          </>
-        ) : (
-          <div className="space-y-1 border-t border-border/60 pt-3">
-            <p className="text-sm font-medium">No demand in this window</p>
-            <p className="text-xs text-muted-foreground">
-              Nothing was sold, returned or billed through this channel for the
-              filters on screen. The other channel is unaffected — the two are
-              never added together.
-            </p>
-          </div>
-        )}
-      </CardContent>
-    </Card>
-  );
-}
+const kpiCardVariants: Variants = {
+  hidden: { opacity: 0, y: 12 },
+  visible: (i: number) => ({
+    opacity: 1,
+    y: 0,
+    transition: {
+      duration: 0.3,
+      delay: i * 0.05,
+      ease: [0.25, 0.1, 0.25, 1] as const,
+    },
+  }),
+};
 
 export function CustomerOrderConsumptionKpis({
   onOpenExceptions,
-}: KpiBandProps): React.ReactElement | null {
+}: {
+  onOpenExceptions?: () => void;
+}): React.ReactElement {
   const { report } = useCustomerOrderConsumptionReport();
 
-  // Read off the rows already on screen: distinct products and months are the
-  // two things a reader checks to see how wide this window actually is.
-  const coverage = React.useMemo(() => {
-    const products = new Set<number>();
-    const months = new Set<string>();
-    for (const row of report?.rows ?? []) {
-      products.add(row.productId);
-      for (const point of row.monthlyTrend) {
-        if (point.netKg !== 0 || point.orderCount > 0) months.add(point.yearMonth);
-      }
-    }
-    return { products: products.size, months: months.size };
-  }, [report]);
+  const ov = report?.overview;
+  const totalNetKg = (ov?.cylinder.netKg ?? 0) + (ov?.lpg.netKg ?? 0);
+  const totalGrossKg = (ov?.cylinder.grossKg ?? 0) + (ov?.lpg.grossKg ?? 0);
+  const totalReturnedKg = (ov?.cylinder.returnedKg ?? 0) + (ov?.lpg.returnedKg ?? 0);
+  const overallReturnRate = totalGrossKg > 0 ? (totalReturnedKg * 100) / totalGrossKg : 0;
+  const overallAvgOrderKg = (ov?.totalOrders ?? 0) > 0 ? totalNetKg / (ov?.totalOrders ?? 1) : 0;
 
-  if (!report) return null;
-
-  const { overview, sourceRowCount } = report;
+  if (!ov) return <></>;
 
   return (
-    <section
-      aria-label="Report totals"
-      className="grid gap-3 md:grid-cols-2 xl:grid-cols-3"
-    >
-      <ChannelCard
-        title="Cylinder & bulk"
-        basis="industrial cylinders · kg = qty x category size"
-        icon={<Boxes aria-hidden="true" className="size-4 text-amber-700" />}
-        totals={overview.cylinder}
-      />
-      <ChannelCard
-        title="Metered & weighed LPG"
-        basis="kg = recorded usage"
-        icon={<Flame aria-hidden="true" className="size-4 text-sky-700" />}
-        totals={overview.lpg}
-      />
-
-      <Card className="border-border/80 md:col-span-2 xl:col-span-1">
-        <CardContent className="space-y-2 px-4 py-3">
-          <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wider text-muted-foreground">
-            <ListFilter aria-hidden="true" className="size-4 text-primary" />
-            Window coverage
-          </div>
-
-          <dl className="grid gap-x-6 sm:grid-cols-2">
-            <Stat label="Products" value={formatQty(coverage.products)} />
-            <Stat label="Months with demand" value={formatQty(coverage.months)} />
-            <Stat label="Result rows" value={formatQty(report.rows.length)} />
-            <Stat label="Source rows" value={formatQty(sourceRowCount)} />
-          </dl>
-
-          <p className="text-xs text-muted-foreground">
-            {formatQty(overview.totalCustomers)} customers placed{" "}
-            {formatQty(overview.totalOrders)} ordering events across both
-            channels. One event is one sales order, so an order billed across
-            several invoices is not counted twice.
-          </p>
-
-          {overview.exceptionCount > 0 ? (
-            <div className="flex items-center justify-between gap-2 rounded-md border border-amber-200 bg-amber-50/60 px-3 py-2 dark:border-amber-900/50 dark:bg-amber-950/20">
-              <span className="flex items-center gap-2 text-xs font-medium">
-                <AlertTriangle
-                  aria-hidden="true"
-                  className="size-4 text-amber-700"
-                />
-                {formatQty(overview.exceptionCount)} data exception
-                {overview.exceptionCount === 1 ? "" : "s"}
-              </span>
-              {onOpenExceptions ? (
-                <Button type="button" size="sm" variant="outline" onClick={onOpenExceptions}>
-                  Review
-                </Button>
-              ) : null}
+    <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-5">
+      {/* 1. Total Net Purchased Kg */}
+      <motion.div
+        custom={0}
+        variants={kpiCardVariants}
+        initial="hidden"
+        animate="visible"
+        whileHover={{ y: -2, transition: { duration: 0.15 } }}
+      >
+        <Card className="p-3.5 shadow-none border bg-card hover:shadow-xs transition-shadow">
+          <CardContent className="p-0 space-y-1.5">
+            <div className="flex items-center justify-between text-muted-foreground">
+              <span className="text-xs font-medium">Net Purchased Weight</span>
+              <Scale className="size-4 text-primary" />
             </div>
-          ) : (
-            <p className="text-xs text-muted-foreground">
-              No data exceptions in this window.
+            <div className="text-xl font-bold tabular-nums tracking-tight">
+              {formatKgCompact(totalNetKg)}
+            </div>
+            <div className="flex items-center gap-1.5 text-[11px] text-muted-foreground pt-0.5">
+              <span className="flex items-center gap-0.5 text-blue-600 font-medium">
+                <Cylinder className="size-3" />
+                {formatKgCompact(ov.cylinder.netKg)}
+              </span>
+              <span>·</span>
+              <span className="flex items-center gap-0.5 text-amber-600 font-medium">
+                <Flame className="size-3" />
+                {formatKgCompact(ov.lpg.netKg)}
+              </span>
+            </div>
+          </CardContent>
+        </Card>
+      </motion.div>
+
+      {/* 2. Total Order Frequency */}
+      <motion.div
+        custom={1}
+        variants={kpiCardVariants}
+        initial="hidden"
+        animate="visible"
+        whileHover={{ y: -2, transition: { duration: 0.15 } }}
+      >
+        <Card className="p-3.5 shadow-none border bg-card hover:shadow-xs transition-shadow">
+          <CardContent className="p-0 space-y-1.5">
+            <div className="flex items-center justify-between text-muted-foreground">
+              <span className="text-xs font-medium">Order Frequency</span>
+              <ShoppingBag className="size-4 text-emerald-600" />
+            </div>
+            <div className="text-xl font-bold tabular-nums tracking-tight">
+              {formatQty(ov.totalOrders)}
+            </div>
+            <p className="text-[11px] text-muted-foreground">
+              Across {ov.totalCustomers} active customer accounts
             </p>
-          )}
-        </CardContent>
-      </Card>
-    </section>
+          </CardContent>
+        </Card>
+      </motion.div>
+
+      {/* 3. Average Order Size */}
+      <motion.div
+        custom={2}
+        variants={kpiCardVariants}
+        initial="hidden"
+        animate="visible"
+        whileHover={{ y: -2, transition: { duration: 0.15 } }}
+      >
+        <Card className="p-3.5 shadow-none border bg-card hover:shadow-xs transition-shadow">
+          <CardContent className="p-0 space-y-1.5">
+            <div className="flex items-center justify-between text-muted-foreground">
+              <span className="text-xs font-medium">Avg Order Size</span>
+              <Layers className="size-4 text-indigo-600" />
+            </div>
+            <div className="text-xl font-bold tabular-nums tracking-tight">
+              {formatKgCompact(overallAvgOrderKg)}
+            </div>
+            <p className="text-[11px] text-muted-foreground">
+              Cylinder: {formatKgCompact(ov.cylinder.avgOrderSizeKg)} / event
+            </p>
+          </CardContent>
+        </Card>
+      </motion.div>
+
+      {/* 4. Returns & Return Rate */}
+      <motion.div
+        custom={3}
+        variants={kpiCardVariants}
+        initial="hidden"
+        animate="visible"
+        whileHover={{ y: -2, transition: { duration: 0.15 } }}
+      >
+        <Card className="p-3.5 shadow-none border bg-card hover:shadow-xs transition-shadow">
+          <CardContent className="p-0 space-y-1.5">
+            <div className="flex items-center justify-between text-muted-foreground">
+              <span className="text-xs font-medium">Returns Deducted</span>
+              <ArrowDownRight className="size-4 text-rose-600" />
+            </div>
+            <div className="text-xl font-bold tabular-nums tracking-tight text-rose-600">
+              {formatKgCompact(totalReturnedKg)}
+            </div>
+            <div className="flex items-center justify-between text-[11px] text-muted-foreground">
+              <span>{formatQty(ov.cylinder.returnedQty)} pieces returned</span>
+              <Badge variant="outline" className="text-[10px] px-1 py-0 text-rose-600 border-rose-200">
+                {formatPercent(overallReturnRate)}
+              </Badge>
+            </div>
+          </CardContent>
+        </Card>
+      </motion.div>
+
+      {/* 5. Data Exceptions */}
+      <motion.div
+        custom={4}
+        variants={kpiCardVariants}
+        initial="hidden"
+        animate="visible"
+        whileHover={{ y: -2, transition: { duration: 0.15 } }}
+      >
+        <Card
+          onClick={onOpenExceptions}
+          className={`p-3.5 shadow-none border cursor-pointer transition-all ${
+            ov.exceptionCount > 0 ? "border-amber-300 bg-amber-50/20 hover:bg-amber-50/40" : "bg-card hover:bg-muted/40"
+          }`}
+        >
+          <CardContent className="p-0 space-y-1.5">
+            <div className="flex items-center justify-between text-muted-foreground">
+              <span className="text-xs font-medium">Data Exceptions</span>
+              <AlertTriangle className={`size-4 ${ov.exceptionCount > 0 ? "text-amber-600" : "text-muted-foreground"}`} />
+            </div>
+            <div className="text-xl font-bold tabular-nums tracking-tight">
+              {ov.exceptionCount}
+            </div>
+            <p className="text-[11px] text-muted-foreground flex items-center gap-1">
+              {ov.exceptionCount > 0 ? "Click to inspect flagged items" : "All records verified"}
+            </p>
+          </CardContent>
+        </Card>
+      </motion.div>
+    </div>
   );
 }

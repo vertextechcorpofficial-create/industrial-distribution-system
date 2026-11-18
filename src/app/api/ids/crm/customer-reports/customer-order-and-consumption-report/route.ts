@@ -104,10 +104,10 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
       if (!parsed.success) {
         return invalidFilters(parsed.error.issues[0]?.message ?? "Invalid drill-down filters.");
       }
-      const { customerDetail, ...filterInput } = parsed.data;
+      const { customerDetail, productDetail, ...filterInput } = parsed.data;
       const filters: AppliedFilterContext = { ...filterInput, ...readLabels(params) };
       return NextResponse.json(
-        await fetchCustomerOrderConsumptionDetail(filters, customerDetail, {
+        await fetchCustomerOrderConsumptionDetail(filters, customerDetail, productDetail, {
           signal: request.signal,
         })
       );

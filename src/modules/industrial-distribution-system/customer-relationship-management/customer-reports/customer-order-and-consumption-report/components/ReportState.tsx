@@ -1,57 +1,101 @@
-"use client";
-
+// src/modules/industrial-distribution-system/customer-relationship-management/customer-reports/customer-order-and-consumption-report/components/ReportState.tsx
 // ============================================================
-// ReportState.tsx
-// Loading, error and empty shells. Kept in one file because they share the
-// same card frame and only differ in what they say.
+// State boundaries: skeletons, empty states, error fallbacks, and prompt states.
 // ============================================================
 
 import * as React from "react";
-import { AlertTriangle, Inbox, Loader2, RefreshCw } from "lucide-react";
-
+import { AlertCircle, AlertTriangle, ArrowRight, FileQuestion, RefreshCw } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 
-interface StateProps {
-  message?: string;
-  onRetry?(): void;
-}
-
 export function ReportSkeleton(): React.ReactElement {
   return (
-    <div className="space-y-3" role="status" aria-live="polite" aria-busy="true">
-      <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
-        {[0, 1, 2].map((key) => (
-          <Skeleton key={key} className="h-44 w-full rounded-lg" />
+    <div className="space-y-4">
+      {/* KPI Cards Skeletons */}
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-5">
+        {Array.from({ length: 5 }).map((_, i) => (
+          <Card key={i} className="p-4">
+            <Skeleton className="h-4 w-24 mb-2" />
+            <Skeleton className="h-7 w-32 mb-1" />
+            <Skeleton className="h-3 w-16" />
+          </Card>
         ))}
       </div>
-      <Skeleton className="h-9 w-96 max-w-full rounded-lg" />
-      <Skeleton className="h-80 w-full rounded-lg" />
-      <p className="flex items-center gap-2 text-xs text-muted-foreground">
-        <Loader2 aria-hidden="true" className="size-4 animate-spin" />
-        Reading sales, returns and LPG records…
-      </p>
+
+      {/* Main Table Skeleton */}
+      <Card className="p-4">
+        <div className="flex items-center justify-between mb-4">
+          <Skeleton className="h-8 w-48" />
+          <Skeleton className="h-8 w-64" />
+        </div>
+        <div className="space-y-2">
+          {Array.from({ length: 6 }).map((_, i) => (
+            <Skeleton key={i} className="h-12 w-full" />
+          ))}
+        </div>
+      </Card>
     </div>
   );
 }
 
-export function ReportErrorState({ message, onRetry }: StateProps): React.ReactElement {
+export function ReportEmptyState(): React.ReactElement {
   return (
-    <Card className="border-destructive/40">
-      <CardContent className="flex flex-col items-start gap-3 px-4 py-6">
-        <div className="flex items-center gap-2 text-sm font-semibold text-destructive">
-          <AlertTriangle aria-hidden="true" className="size-4" />
-          The report could not be loaded
+    <Card className="border-dashed py-12 text-center">
+      <CardContent className="flex flex-col items-center justify-center space-y-3">
+        <div className="rounded-full bg-muted p-3">
+          <FileQuestion className="size-8 text-muted-foreground" />
         </div>
-        <p className="text-sm text-muted-foreground">
-          {message ??
-            "The sales or LPG source did not answer. No numbers are shown rather than partial ones."}
-        </p>
+        <div className="space-y-1">
+          <h3 className="text-base font-semibold">No Demand Records Found</h3>
+          <p className="text-xs text-muted-foreground max-w-sm">
+            No sales orders, fulfilled invoices, or LPG site consumptions were recorded for the selected period and branch filters.
+          </p>
+        </div>
+      </CardContent>
+    </Card>
+  );
+}
+
+export function ReportPromptState(): React.ReactElement {
+  return (
+    <Card className="border-dashed py-12 text-center">
+      <CardContent className="flex flex-col items-center justify-center space-y-3">
+        <div className="rounded-full bg-primary/10 p-3">
+          <ArrowRight className="size-8 text-primary" />
+        </div>
+        <div className="space-y-1">
+          <h3 className="text-base font-semibold">Select Reporting Period & Filters</h3>
+          <p className="text-xs text-muted-foreground max-w-sm">
+            Choose a date range and authorized branch above, then click &ldquo;Apply Filters&rdquo; to generate the customer order and consumption assessment.
+          </p>
+        </div>
+      </CardContent>
+    </Card>
+  );
+}
+
+export function ReportErrorState({
+  message,
+  onRetry,
+}: {
+  message: string;
+  onRetry?: () => void;
+}): React.ReactElement {
+  return (
+    <Card className="border-destructive/40 bg-destructive/5 p-6 text-center">
+      <CardContent className="flex flex-col items-center justify-center space-y-3 p-0">
+        <div className="rounded-full bg-destructive/10 p-3">
+          <AlertCircle className="size-8 text-destructive" />
+        </div>
+        <div className="space-y-1">
+          <h3 className="text-base font-semibold text-destructive">Unable to Build Report</h3>
+          <p className="text-xs text-muted-foreground max-w-md">{message}</p>
+        </div>
         {onRetry ? (
-          <Button type="button" size="sm" variant="outline" onClick={onRetry} className="gap-2">
-            <RefreshCw aria-hidden="true" className="size-4" />
-            Try again
+          <Button variant="outline" size="sm" onClick={onRetry} className="gap-2">
+            <RefreshCw className="size-3.5" />
+            Retry Report
           </Button>
         ) : null}
       </CardContent>
@@ -59,31 +103,6 @@ export function ReportErrorState({ message, onRetry }: StateProps): React.ReactE
   );
 }
 
-export function ReportEmptyState(): React.ReactElement {
-  return (
-    <Card>
-      <CardContent className="flex flex-col items-start gap-2 px-4 py-8">
-        <div className="flex items-center gap-2 text-sm font-semibold">
-          <Inbox aria-hidden="true" className="size-4 text-muted-foreground" />
-          No demand recorded in this window
-        </div>
-        <p className="text-sm text-muted-foreground">
-          No row in this window matched the report&rsquo;s scope. Cylinder demand
-          counts only serialized products in industrial categories; LPG demand
-          counts metered or weighed usage. Widen the period, or clear the branch,
-          customer, salesman or classification filter. An empty result here is a
-          real answer, not a missing one — but it is worth checking the window
-          first.
-        </p>
-      </CardContent>
-    </Card>
-  );
-}
-
-/**
- * Per-tab "nothing in this view" message. Distinct from the empty report: the
- * demand exists, only this particular cut of it has no rows to show.
- */
 export function ReportQuietState({
   title,
   message,
@@ -92,10 +111,13 @@ export function ReportQuietState({
   message: string;
 }): React.ReactElement {
   return (
-    <Card className="border-dashed">
-      <CardContent className="flex flex-col items-start gap-1.5 px-4 py-8">
-        <h3 className="text-sm font-semibold">{title}</h3>
-        <p className="text-sm text-muted-foreground">{message}</p>
+    <Card className="border-dashed py-10 text-center">
+      <CardContent className="flex flex-col items-center justify-center space-y-2">
+        <div className="rounded-full bg-muted p-2.5">
+          <AlertTriangle className="size-6 text-muted-foreground" />
+        </div>
+        <h4 className="text-sm font-medium">{title}</h4>
+        <p className="text-xs text-muted-foreground max-w-md">{message}</p>
       </CardContent>
     </Card>
   );

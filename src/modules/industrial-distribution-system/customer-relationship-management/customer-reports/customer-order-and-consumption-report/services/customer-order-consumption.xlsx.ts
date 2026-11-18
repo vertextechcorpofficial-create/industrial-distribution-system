@@ -1,125 +1,112 @@
+// src/modules/industrial-distribution-system/customer-relationship-management/customer-reports/customer-order-and-consumption-report/services/customer-order-consumption.xlsx.ts
 // ============================================================
-// customer-order-consumption.xlsx.ts
-// Excel writer. One worksheet per export section plus a Filters sheet, so a
-// recipient always knows which window produced the numbers.
+// Multi-sheet Excel export generator using SheetJS (xlsx).
+// Generates:
+// 1. Filters & Overview
+// 2. Customer Demand Summary (Customer Main Group)
+// 3. Customer Products Breakdown
+// 4. Data Exceptions & Audit
 // ============================================================
 
 import * as XLSX from "xlsx";
-
 import type { CustomerOrderConsumptionReportResponse } from "../types/customer-order-consumption.types";
 import {
-  buildReportExportSections,
-  buildReportFilterContext,
-  type ReportExportCell,
-  type ReportExportSection,
+  flattenCustomersForExport,
+  flattenExceptionsForExport,
+  flattenProductsForExport,
 } from "./customer-order-consumption.export-model";
-import {
-  buildReportFilename,
-  formatGeneratedAt,
-  safeSheetName,
-} from "./customer-order-consumption.helpers";
 
-type ExportWorksheet = XLSX.WorkSheet & {
-  "!freeze"?: { xSplit: number; ySplit: number };
-};
-
-const KG_COLUMN_PATTERN = /(kg|amount|qty|quantity|rate)/i;
-
-function filtersSheet(
-  report: CustomerOrderConsumptionReportResponse
-): ExportWorksheet {
-  const rows: ReportExportCell[][] = [
-    ["Filter", "Applied Value"],
-    ...buildReportFilterContext(report.filters).map(
-      ({ label, value }): ReportExportCell[] => [label, value]
-    ),
-    ["Reporting Cutoff", report.reportingCutoff],
-    ["Generated At", formatGeneratedAt(report.generatedAt)],
-    ["Source Rows Read", report.sourceRowCount],
-    ["Result Rows", report.rows.length],
-    ["Data Exceptions", report.exceptions.length],
-  ];
-
-  const sheet = XLSX.utils.aoa_to_sheet(rows) as ExportWorksheet;
-  sheet["!cols"] = [{ wch: 26 }, { wch: 64 }];
-  sheet["!freeze"] = { xSplit: 0, ySplit: 1 };
-  return sheet;
-}
-
-function columnWidth(value: ReportExportCell): number {
-  return String(value ?? "").length;
-}
-
-/**
- * Numeric kg/amount cells keep their decimals as numbers (not text) so the
- * recipient can sum and pivot them; only the format is set here.
- */
-function applyNumberFormats(sheet: ExportWorksheet, section: ReportExportSection): void {
-  section.rows.forEach((row, rowIndex) => {
-    row.forEach((value, columnIndex) => {
-      if (typeof value !== "number") return;
-      const column = section.columns[columnIndex] ?? "";
-      if (!KG_COLUMN_PATTERN.test(column)) return;
-      const address = XLSX.utils.encode_cell({ r: rowIndex + 1, c: columnIndex });
-      const cell = sheet[address];
-      if (cell) cell.z = column.includes("Rate") ? "0.0" : "0.###";
-    });
-  });
-}
-
-function sectionSheet(section: ReportExportSection): ExportWorksheet {
-  const sheet = XLSX.utils.aoa_to_sheet([
-    section.columns,
-    ...section.rows,
-  ]) as ExportWorksheet;
-
-  sheet["!cols"] = section.columns.map((column, columnIndex) => {
-    const widest = section.rows.reduce(
-      (width, row) => Math.max(width, columnWidth(row[columnIndex] ?? "")),
-      column.length
-    );
-    return { wch: Math.min(Math.max(widest + 2, 12), 42) };
-  });
-  sheet["!freeze"] = { xSplit: 0, ySplit: 1 };
-  sheet["!autofilter"] = {
-    ref: `A1:${XLSX.utils.encode_col(Math.max(section.columns.length - 1, 0))}${Math.max(
-      section.rows.length + 1,
-      1
-    )}`,
-  };
-  applyNumberFormats(sheet, section);
-  return sheet;
-}
-
-/**
- * Builds the workbook without writing it, so the sheet layout is unit-testable.
- */
-export function buildCustomerOrderConsumptionWorkbook(
+export function generateCustomerOrderConsumptionWorkbook(
   report: CustomerOrderConsumptionReportResponse
 ): XLSX.WorkBook {
-  const workbook = XLSX.utils.book_new();
-  const usedNames = new Set<string>(["Filters"]);
-  XLSX.utils.book_append_sheet(workbook, filtersSheet(report), "Filters");
+  const wb = XLSX.utils.book_new();
 
-  for (const section of buildReportExportSections(report)) {
-    XLSX.utils.book_append_sheet(
-      workbook,
-      sectionSheet(section),
-      safeSheetName(section.title, usedNames)
-    );
+  // 1. Filters & Overview Sheet
+  const overviewRows = [
+    ["Report", "Customer Order & Consumption Report"],
+    ["Reporting Cutoff", report.reportingCutoff],
+    ["Generated At", report.generatedAt],
+    ["Start Date", report.filters.startDate],
+    ["End Date", report.filters.endDate],
+    ["Total Customers", report.overview.totalCustomers],
+    ["Total Orders", report.overview.totalOrders],
+    ["Cylinder Net Kg", report.overview.cylinder.netKg],
+    ["LPG Net Kg", report.overview.lpg.netKg],
+    ["Exceptions Count", report.overview.exceptionCount],
+  ];
+  const overviewSheet = XLSX.utils.aoa_to_sheet(overviewRows);
+  overviewSheet["!cols"] = [{ wch: 22 }, { wch: 40 }];
+  XLSX.utils.book_append_sheet(wb, overviewSheet, "Overview");
+
+  // 2. Customer Summary Sheet (Main Group)
+  const customerRows = flattenCustomersForExport(report.rows);
+  const customerSheet = XLSX.utils.json_to_sheet(customerRows);
+  customerSheet["!cols"] = [
+    { wch: 16 }, // Customer Code
+    { wch: 28 }, // Customer Name
+    { wch: 20 }, // Store Name
+    { wch: 18 }, // Branch
+    { wch: 16 }, // Classification
+    { wch: 16 }, // Order Frequency
+    { wch: 16 }, // Fulfilled Pieces
+    { wch: 16 }, // Returned Pieces
+    { wch: 14 }, // Net Pieces
+    { wch: 16 }, // Gross Kg
+    { wch: 16 }, // Returned Kg
+    { wch: 18 }, // Net Purchased Kg
+    { wch: 18 }, // Avg Order Size Kg
+    { wch: 20 }, // Net Revenue (PHP)
+  ];
+  XLSX.utils.book_append_sheet(wb, customerSheet, "Customers");
+
+  // 3. Products Breakdown Sheet
+  const productRows = flattenProductsForExport(report.rows);
+  const productSheet = XLSX.utils.json_to_sheet(productRows);
+  productSheet["!cols"] = [
+    { wch: 16 }, // Customer Code
+    { wch: 26 }, // Customer Name
+    { wch: 30 }, // Product Name
+    { wch: 16 }, // Product Code
+    { wch: 18 }, // Cylinder Size
+    { wch: 14 }, // Gas Type
+    { wch: 12 }, // Channel
+    { wch: 16 }, // Order Frequency
+    { wch: 16 }, // Fulfilled Pieces
+    { wch: 16 }, // Returned Pieces
+    { wch: 14 }, // Net Pieces
+    { wch: 16 }, // Gross Kg
+    { wch: 16 }, // Returned Kg
+    { wch: 18 }, // Net Purchased Kg
+    { wch: 18 }, // Avg Order Size Kg
+    { wch: 20 }, // Net Revenue
+  ];
+  XLSX.utils.book_append_sheet(wb, productSheet, "Products");
+
+  // 4. Exceptions Sheet
+  if (report.exceptions.length > 0) {
+    const exceptionRows = flattenExceptionsForExport(report.exceptions);
+    const exceptionSheet = XLSX.utils.json_to_sheet(exceptionRows);
+    exceptionSheet["!cols"] = [
+      { wch: 26 }, // Exception Code
+      { wch: 12 }, // Channel
+      { wch: 16 }, // Customer Code
+      { wch: 24 }, // Customer Name
+      { wch: 16 }, // Reference Type
+      { wch: 18 }, // Reference No
+      { wch: 45 }, // Detail
+      { wch: 12 }, // Quantity
+      { wch: 12 }, // Kg
+    ];
+    XLSX.utils.book_append_sheet(wb, exceptionSheet, "Exceptions");
   }
-  return workbook;
+
+  return wb;
 }
 
-/**
- * Downloads the workbook. The filename carries the cutoff because the same
- * report is re-run every month and the files land in one Downloads folder.
- */
-export function exportCustomerOrderConsumptionWorkbook(
-  report: CustomerOrderConsumptionReportResponse
+export function downloadCustomerOrderConsumptionExcel(
+  report: CustomerOrderConsumptionReportResponse,
+  filename = "customer-order-and-consumption-report.xlsx"
 ): void {
-  XLSX.writeFile(
-    buildCustomerOrderConsumptionWorkbook(report),
-    buildReportFilename("customer-order-consumption", report.filters, "xlsx")
-  );
+  const wb = generateCustomerOrderConsumptionWorkbook(report);
+  XLSX.writeFile(wb, filename);
 }
