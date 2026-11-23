@@ -18,7 +18,7 @@ import {
   ChevronLeft,
   ChevronRight,
   ExternalLink,
-  Layers
+  Layers,
 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -332,6 +332,7 @@ export function CustomerOrderConsumptionTable(): React.ReactElement {
                             variant="ghost"
                             size="sm"
                             className="h-7 text-xs px-2 gap-1 text-primary hover:text-primary"
+                            title={`Audit all supporting records for ${customer.customerName}`}
                             onClick={(e) => {
                               e.stopPropagation();
                               openDrillDown({
@@ -399,9 +400,6 @@ export function CustomerOrderConsumptionTable(): React.ReactElement {
                                         <TableHead className="text-[11px] font-semibold text-right py-1">
                                           Avg Order (kg)
                                         </TableHead>
-                                        <TableHead className="text-[11px] font-semibold text-center py-1">
-                                          Supporting Records
-                                        </TableHead>
                                       </TableRow>
                                     </TableHeader>
 
@@ -412,16 +410,7 @@ export function CustomerOrderConsumptionTable(): React.ReactElement {
                                           initial={{ opacity: 0, x: -4 }}
                                           animate={{ opacity: 1, x: 0 }}
                                           transition={{ duration: 0.16, delay: pIndex * 0.02, ease: "easeOut" }}
-                                          className="h-8 hover:bg-muted/40 cursor-pointer border-b border-border/40 transition-colors"
-                                          onClick={(e) => {
-                                            e.stopPropagation();
-                                            openDrillDown({
-                                              customerCode: customer.customerCode,
-                                              customerName: customer.customerName,
-                                              productId: p.productId,
-                                              productName: p.productName,
-                                            });
-                                          }}
+                                          className="h-8 hover:bg-muted/30 border-b border-border/40 transition-colors"
                                         >
                                           <TableCell className="text-xs font-medium py-1.5 max-w-[200px] truncate">
                                             {/* Shows products.description as product name per ids-guide */}
@@ -462,25 +451,6 @@ export function CustomerOrderConsumptionTable(): React.ReactElement {
                                           </TableCell>
                                           <TableCell className="text-right text-xs tabular-nums text-muted-foreground py-1.5">
                                             {formatKgCompact(p.avgOrderSizeKg)}
-                                          </TableCell>
-                                          <TableCell className="text-center py-1.5">
-                                            <Button
-                                              type="button"
-                                              variant="ghost"
-                                              size="sm"
-                                              className="h-6 text-[11px] px-2 text-primary hover:text-primary gap-1"
-                                              onClick={(e) => {
-                                                e.stopPropagation();
-                                                openDrillDown({
-                                                  customerCode: customer.customerCode,
-                                                  customerName: customer.customerName,
-                                                  productId: p.productId,
-                                                  productName: p.productName,
-                                                });
-                                              }}
-                                            >
-                                              View Documents
-                                            </Button>
                                           </TableCell>
                                         </motion.tr>
                                       ))}

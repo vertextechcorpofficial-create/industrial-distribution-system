@@ -264,7 +264,7 @@ export function computeCustomerCylinderAgingReport(
       id: raw.id,
       serialNumber: raw.serial_number,
       productId: Number(prodObj.product_id),
-      productName: prodObj.product_name || "Industrial Gas Cylinder",
+      productName: prodObj.product_name || "-",
       productCode: prodObj.product_code || undefined,
       isSerialized,
       tareWeight: raw.tare_weight,

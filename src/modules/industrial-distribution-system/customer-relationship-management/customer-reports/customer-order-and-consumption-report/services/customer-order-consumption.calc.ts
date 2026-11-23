@@ -943,7 +943,7 @@ export function aggregateCustomerOrderConsumption(
         ? "Metered LPG"
         : isWiwoLpg
         ? "WIWO LPG (Kg)"
-        : category?.category_name ?? "Industrial Gas";
+        : category?.category_name ?? "-";
 
       const displayGasType =
         isMeteredLpg || (prodAcc.hasMetered && !prodAcc.hasWiwo)
@@ -956,7 +956,7 @@ export function aggregateCustomerOrderConsumption(
             category?.category_name?.toLowerCase().includes("lpg") ||
             prodAcc.channel === "LPG"
           ? "LPG"
-          : "Industrial Gas";
+          : "-";
 
       productSummaries.push({
         productId: prodAcc.productId,
