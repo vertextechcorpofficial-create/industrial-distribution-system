@@ -5,15 +5,13 @@
  * Implements contracts for:
  * - Subscription tiers and entitlements
  * - GDPR sanitization options
- * - Human-in-the-Loop (HITL) and EU AI Act Article 14 governance metadata
+ * - Human-in-the-Loop (HITL) 
  * - Core AI execution requests and responses
  */
 
 export type GlobalAiTierSlug = 'basic' | 'pro' | 'executive';
 
-/**
- * Standard governance metadata for EU AI Act Article 14 & HITL compliance
- */
+
 export interface AiGovernanceMetadata {
     /** True to confirm outputs are non-binding and non-executable */
     isAdvisoryOnly: boolean;
