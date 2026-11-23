@@ -777,9 +777,18 @@ export async function fetchSupportingDocumentsForCustomer(
         orderParentProductByOrderNo.set(canonicalOrderNo, parentForOrder);
       }
 
-      if (productId != null && pid !== Number(productId)) continue;
-      const scoped = resolveScopedProduct(pid);
+      const scoped = parentForOrder ?? resolveScopedProduct(pid);
       if (!scoped) continue;
+      const effectiveParentId = Number(scoped.product.product_id);
+
+      // Support filtering by exact product ID or its resolved Parent Product ID
+      if (
+        productId != null &&
+        pid !== Number(productId) &&
+        effectiveParentId !== Number(productId)
+      ) {
+        continue;
+      }
 
       const qty = toNumber(
         d.ordered_quantity ?? d.served_quantity ?? d.allocated_quantity ?? d.quantity,
@@ -798,8 +807,8 @@ export async function fetchSupportingDocumentsForCustomer(
         customerCode,
         customerName: customerCode,
         branchName: so.branch_id ? branchMap.get(Number(so.branch_id)) ?? "Branch" : "Main",
-        productId: pid,
-        productName: scoped.product.description || scoped.product.product_name || `Product #${pid}`,
+        productId: effectiveParentId,
+        productName: scoped.product.description || scoped.product.product_name || `Product #${effectiveParentId}`,
         productCode: scoped.product.product_code ?? "",
         quantity: qty,
         kg: qty * scoped.unitKg,
@@ -811,15 +820,21 @@ export async function fetchSupportingDocumentsForCustomer(
     }
   }
 
-  // 2. Invoices & Details
-  const invoiceIds = invoices.map((i) => i.invoice_id);
-  if (invoiceIds.length > 0) {
-    const details = await read<RawInvoiceDetailRow>("sales_invoice_details", {
-      fields: "detail_id,invoice_no,product_id,quantity,unit_price,total_amount",
-      filter: { invoice_no: { _in: invoiceIds } },
-    });
+  // 2. Invoices & Details (fetched for allCustomerInvoices so linked LPG billing invoices have details too)
+  const allInvIds = allCustomerInvoices.map((i) => i.invoice_id);
+  const windowedInvIdSet = new Set(invoices.map((i) => Number(i.invoice_id)));
+  if (allInvIds.length > 0) {
+    const detailBatches = await Promise.all(
+      chunk(allInvIds).map((ids) =>
+        read<RawInvoiceDetailRow>("sales_invoice_details", {
+          fields: "detail_id,invoice_no,product_id,quantity,unit_price,total_amount",
+          filter: { invoice_no: { _in: ids } },
+        }).catch(() => [])
+      )
+    );
+    const details = flatten(detailBatches);
 
-    const invMap = new Map(invoices.map((i) => [Number(i.invoice_id), i]));
+    const invMap = new Map(allCustomerInvoices.map((i) => [Number(i.invoice_id), i]));
     for (const d of details) {
       const pid = Number(d.product_id);
       const inv = invMap.get(Number(d.invoice_no));
@@ -831,9 +846,20 @@ export async function fetchSupportingDocumentsForCustomer(
         invoiceParentProductByInvId.set(Number(inv.invoice_id), parentForInv);
       }
 
-      if (productId != null && pid !== Number(productId)) continue;
-      const scoped = resolveScopedProduct(pid);
+      // Only emit cylinder invoice documents for invoices placed within the reporting date window
+      if (!windowedInvIdSet.has(Number(inv.invoice_id))) continue;
+
+      const scoped = parentForInv ?? resolveScopedProduct(pid);
       if (!scoped) continue;
+      const effectiveParentId = Number(scoped.product.product_id);
+
+      if (
+        productId != null &&
+        pid !== Number(productId) &&
+        effectiveParentId !== Number(productId)
+      ) {
+        continue;
+      }
 
       const qty = toNumber(d.quantity, 0);
       const invNo = (inv.invoice_no && inv.invoice_no.trim()) || `SI-${inv.invoice_id}`;
@@ -849,8 +875,8 @@ export async function fetchSupportingDocumentsForCustomer(
         customerCode,
         customerName: customerCode,
         branchName: inv.branch_id ? branchMap.get(Number(inv.branch_id)) ?? "Branch" : "Main",
-        productId: pid,
-        productName: scoped.product.description || scoped.product.product_name || `Product #${pid}`,
+        productId: effectiveParentId,
+        productName: scoped.product.description || scoped.product.product_name || `Product #${effectiveParentId}`,
         productCode: scoped.product.product_code ?? "",
         quantity: qty,
         kg: qty * scoped.unitKg,
@@ -890,11 +916,21 @@ export async function fetchSupportingDocumentsForCustomer(
     const retMap = new Map(returns.map((r) => [r.return_number, r]));
     for (const d of retDetails) {
       const pid = Number(d.product_id);
-      if (productId != null && pid !== Number(productId)) continue;
       const ret = retMap.get(d.return_no);
       if (!ret) continue;
-      const scoped = resolveScopedProduct(pid);
+
+      const parentForRet = resolveParentProduct(pid);
+      const scoped = parentForRet ?? resolveScopedProduct(pid);
       if (!scoped) continue;
+      const effectiveParentId = Number(scoped.product.product_id);
+
+      if (
+        productId != null &&
+        pid !== Number(productId) &&
+        effectiveParentId !== Number(productId)
+      ) {
+        continue;
+      }
 
       const qty = toNumber(d.quantity, 0);
       const rawInvRef =
@@ -914,8 +950,8 @@ export async function fetchSupportingDocumentsForCustomer(
         customerCode,
         customerName: customerCode,
         branchName: ret.branch_id ? branchMap.get(Number(ret.branch_id)) ?? "Branch" : "Main",
-        productId: pid,
-        productName: scoped.product.description || scoped.product.product_name || `Product #${pid}`,
+        productId: effectiveParentId,
+        productName: scoped.product.description || scoped.product.product_name || `Product #${effectiveParentId}`,
         productCode: scoped.product.product_code ?? "",
         quantity: qty,
         kg: qty * scoped.unitKg,
@@ -926,6 +962,27 @@ export async function fetchSupportingDocumentsForCustomer(
         invoiceNo: linkedInvoiceNo,
         returnNo: ret.return_number,
       });
+    }
+  }
+
+  // Pre-index parent product references from standalone and linked WIWO detail lines
+  const wiwoHeaderIds = Array.from(new Set(wiwos.map((w) => Number(w.id)).filter((id) => id > 0)));
+  const wiwoParentProductByHeaderId = new Map<number, ReturnType<typeof resolveScopedProduct>>();
+  if (wiwoHeaderIds.length > 0) {
+    const wiwoDetailBatches = await Promise.all(
+      chunk(wiwoHeaderIds).map((ids) =>
+        read<RawWiwoDetailRow>("lpg_wiwo_details", {
+          fields: "id,wiwo_header_id,product_id",
+          filter: { wiwo_header_id: { _in: ids } },
+        }).catch(() => [])
+      )
+    );
+    for (const d of flatten(wiwoDetailBatches)) {
+      const wid = Number(d.wiwo_header_id);
+      if (!wiwoParentProductByHeaderId.has(wid)) {
+        const parent = resolveParentProduct(d.product_id);
+        if (parent) wiwoParentProductByHeaderId.set(wid, parent);
+      }
     }
   }
 
@@ -994,7 +1051,8 @@ export async function fetchSupportingDocumentsForCustomer(
   // Helper: trace an LPG transaction -> linked sales_invoice -> linked sales_order -> real Parent Product
   const resolveLpgParentProduct = (
     invMeta: { invoice: RawInvoiceRow; invoiceNo: string; orderNo: string | null } | undefined,
-    linkedOrderNo: string | null
+    linkedOrderNo: string | null,
+    wiwoHeaderId?: number | null
   ) => {
     if (invMeta) {
       const fromInv = invoiceParentProductByInvId.get(Number(invMeta.invoice.invoice_id));
@@ -1004,6 +1062,10 @@ export async function fetchSupportingDocumentsForCustomer(
     if (orderRef) {
       const fromOrder = orderParentProductByOrderNo.get(orderRef);
       if (fromOrder) return fromOrder;
+    }
+    if (wiwoHeaderId != null) {
+      const fromWiwo = wiwoParentProductByHeaderId.get(Number(wiwoHeaderId));
+      if (fromWiwo) return fromWiwo;
     }
     return null;
   };
@@ -1023,6 +1085,15 @@ export async function fetchSupportingDocumentsForCustomer(
     emittedInvoiceIds.add(invId);
 
     const parentProd = resolvedParent?.product;
+    const docProductId = parentProd
+      ? Number(parentProd.product_id)
+      : mode === "METERED"
+      ? LPG_METERED_PRODUCT_ID
+      : LPG_WIWO_PRODUCT_ID;
+
+    // Strict product scope check on LPG billing invoices
+    if (productId != null && Number(productId) !== docProductId) return;
+
     documents.push({
       id: `SI-LPG-${invId}`,
       documentType: "SALES_INVOICE",
@@ -1032,11 +1103,7 @@ export async function fetchSupportingDocumentsForCustomer(
       customerCode,
       customerName: customerCode,
       branchName: inv.branch_id ? branchMap.get(Number(inv.branch_id)) ?? "Branch" : "Main",
-      productId: parentProd
-        ? Number(parentProd.product_id)
-        : mode === "METERED"
-        ? LPG_METERED_PRODUCT_ID
-        : LPG_WIWO_PRODUCT_ID,
+      productId: docProductId,
       productName:
         parentProd?.description ||
         parentProd?.product_name ||
@@ -1083,7 +1150,7 @@ export async function fetchSupportingDocumentsForCustomer(
       resolveOrderNo(u.sales_order_no || u.sales_order_id) ?? invMeta?.orderNo ?? null;
 
     // Trace linked invoice -> linked sales order -> real Parent Product
-    const resolvedParent = resolveLpgParentProduct(invMeta, linkedOrderNo);
+    const resolvedParent = resolveLpgParentProduct(invMeta, linkedOrderNo, u.wiwo_header_id);
     const resolvedProductId = resolvedParent
       ? Number(resolvedParent.product.product_id)
       : classified.syntheticProductId;
@@ -1154,7 +1221,7 @@ export async function fetchSupportingDocumentsForCustomer(
       w.sales_invoice_no
     );
     const linkedOrderNo = invMeta?.orderNo ?? null;
-    const resolvedParent = resolveLpgParentProduct(invMeta, linkedOrderNo);
+    const resolvedParent = resolveLpgParentProduct(invMeta, linkedOrderNo, w.id);
     const resolvedProductId = resolvedParent
       ? Number(resolvedParent.product.product_id)
       : LPG_WIWO_PRODUCT_ID;
