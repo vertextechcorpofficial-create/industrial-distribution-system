@@ -33,35 +33,39 @@ const DATE_PRESETS: { id: DatePresetType; label: string }[] = [
 ];
 
 export function SalesPerformanceFilters() {
-  const { filters, lookups, applyFilters, resetFilters, isLoading } =
+  const { filters, setFilter, lookups, applyFilters, resetFilters, isLoading } =
     useSalesPerformance();
 
   // DEV-RULE: Maintain staged local filters so selections do NOT trigger network calls until 'Apply Filter' is clicked
   const [staged, setStaged] = React.useState<SalesPerformanceFilterInput>(filters);
+  // Dedicated local search state to guarantee rapid keystroke capture & isolated debounce
+  const [localSearch, setLocalSearch] = React.useState<string>(filters.searchQuery || "");
 
   // Sync staged filters whenever external filters reset
   React.useEffect(() => {
     setStaged(filters);
+    setLocalSearch(filters.searchQuery || "");
   }, [filters]);
 
   // DEV-RULE: Reactive debounced search sync - when search query changes or is cleared, automatically re-query
   React.useEffect(() => {
     const timer = setTimeout(() => {
-      const currentQuery = staged.searchQuery || "";
-      const appliedQuery = filters.searchQuery || "";
+      const currentQuery = localSearch.trim();
+      const appliedQuery = (filters.searchQuery || "").trim();
       if (currentQuery !== appliedQuery) {
-        applyFilters({ ...staged, searchQuery: currentQuery });
+        setStaged((prev) => ({ ...prev, searchQuery: localSearch }));
+        setFilter("searchQuery", currentQuery);
       }
-    }, 400);
+    }, 300);
 
     return () => clearTimeout(timer);
-  }, [staged.searchQuery, filters.searchQuery, staged, applyFilters]);
+  }, [localSearch, filters.searchQuery, setFilter]);
 
   // Quick clear search handler that immediately resets search and refreshes
   const handleClearSearch = () => {
-    const nextStaged = { ...staged, searchQuery: "" };
-    setStaged(nextStaged);
-    applyFilters(nextStaged);
+    setLocalSearch("");
+    setStaged((prev) => ({ ...prev, searchQuery: "" }));
+    setFilter("searchQuery", "");
   };
 
   // Compute if staged filters have uncommitted changes
@@ -160,13 +164,22 @@ export function SalesPerformanceFilters() {
             <Input
               type="text"
               placeholder="Search by invoice no, customer, branch, product..."
-              value={staged.searchQuery || ""}
-              onChange={(e) => updateStaged("searchQuery", e.target.value)}
-              onKeyDown={(e) => e.key === "Enter" && handleApply()}
+              value={localSearch}
+              onChange={(e) => {
+                const val = e.target.value;
+                setLocalSearch(val);
+                updateStaged("searchQuery", val);
+              }}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") {
+                  setFilter("searchQuery", localSearch.trim());
+                  handleApply();
+                }
+              }}
               className="pl-9 pr-8 h-9 text-xs"
               disabled={isLoading}
             />
-            {staged.searchQuery && (
+            {localSearch && (
               <button
                 type="button"
                 onClick={handleClearSearch}

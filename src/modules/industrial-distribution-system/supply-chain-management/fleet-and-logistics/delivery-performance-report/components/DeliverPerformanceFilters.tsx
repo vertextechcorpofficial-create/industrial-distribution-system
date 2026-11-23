@@ -7,7 +7,7 @@
 "use client";
 
 import React, { useMemo, useState, useEffect } from "react";
-import { Search, RotateCcw } from "lucide-react";
+import { Search, RotateCcw, Loader2 } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { SearchableSelect } from "@/components/ui/searchable-select";
@@ -45,6 +45,9 @@ export function DeliverPerformanceFilters() {
     return () => clearTimeout(handler);
   }, [localSearch, filters.search, updateFilter]);
 
+  // Check if search input has pending debounced changes
+  const isDebouncing = localSearch !== (filters.search || "");
+
   // Branch options
   const branchOptions = useMemo(() => {
     const list = [{ value: "all", label: "All Branches" }];
@@ -81,17 +84,20 @@ export function DeliverPerformanceFilters() {
   return (
     <div className="flex flex-col gap-2 rounded-lg border border-border bg-card/60 p-2 sm:p-2.5 shadow-xs">
       <div className="flex flex-wrap items-end gap-2 w-full">
-        {/* 1. Search Bar with Debounce */}
+        {/* 1. Search Bar with Debounce - AG-RULE: Input is never disabled during background loading to prevent focus loss or typing interruptions */}
         <div className="flex flex-col gap-1 min-w-[200px] flex-1 max-w-sm">
           <label className="text-[11px] font-medium text-muted-foreground">Search</label>
           <div className="relative">
-            <Search className="absolute left-2.5 top-2.5 h-3.5 w-3.5 text-muted-foreground" />
+            {isDebouncing || (loading && localSearch) ? (
+              <Loader2 className="absolute left-2.5 top-2.5 h-3.5 w-3.5 text-muted-foreground animate-spin" />
+            ) : (
+              <Search className="absolute left-2.5 top-2.5 h-3.5 w-3.5 text-muted-foreground" />
+            )}
             <Input
               type="text"
               placeholder="Search waybill, customer, driver..."
               value={localSearch}
               onChange={(e) => setLocalSearch(e.target.value)}
-              disabled={loading}
               className="h-8 pl-8 text-xs bg-background"
             />
           </div>
