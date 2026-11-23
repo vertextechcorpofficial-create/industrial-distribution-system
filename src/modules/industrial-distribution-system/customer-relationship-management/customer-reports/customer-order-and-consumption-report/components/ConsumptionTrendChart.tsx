@@ -264,7 +264,7 @@ export function ConsumptionTrendChart(): React.ReactElement {
                     {/* Legend clearly lists every segment with its exact share so small slices remain fully readable without overlap */}
                     <Legend
                       wrapperStyle={{ fontSize: 11, paddingTop: 6 }}
-                      formatter={(value, entry: any) => {
+                      formatter={(value, entry) => {
                         const val = Number(entry?.payload?.value) || 0;
                         const pct = totalCylinderKg > 0 ? (val / totalCylinderKg) * 100 : 0;
                         const pctStr = pct < 0.1 ? "<0.1%" : `${pct.toFixed(1)}%`;

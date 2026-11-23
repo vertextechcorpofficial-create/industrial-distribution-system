@@ -166,8 +166,8 @@ export const AICopilotDrawer: React.FC<AICopilotDrawerProps> = ({
     const isExecutive = activeTier === 'executive';
     const isPro = activeTier === 'pro';
     const isBasic = activeTier === 'basic';
-    const tierLevelNumber = isExecutive ? 3 : isPro ? 2 : 1;
-    const tierName = activeTier.charAt(0).toUpperCase() + activeTier.slice(1);
+ 
+ 
 
     // Track incorporation of new QA answer
     if (insights?.qaAnswer && insights.userQuery && processedQa !== insights.qaAnswer) {

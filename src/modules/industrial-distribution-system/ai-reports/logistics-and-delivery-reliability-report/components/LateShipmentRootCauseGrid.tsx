@@ -17,7 +17,6 @@ import {
     formatDurationMinutes,
     ROOT_CAUSE_LABELS,
 } from '../services/logisticsMetrics';
-import { Camera, MapPin, FileWarning, MessageSquareText } from 'lucide-react';
 
 interface LateShipmentRootCauseGridProps {
     lateShipments: LateShipmentRootCauseRow[];

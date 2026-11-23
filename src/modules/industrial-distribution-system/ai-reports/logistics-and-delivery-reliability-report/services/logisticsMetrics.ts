@@ -177,7 +177,6 @@ export function evaluateTripTiming(input: TripTimingInput): TripTimingResult {
     }
 
     const estArrStr = String(input.estimatedArrival ?? '');
-    const estDepStr = String(input.estimatedDeparture ?? '');
     const isMidnightOrIdentical =
         !estArr ||
         estArrStr.includes('00:00:00') ||
