@@ -1,5 +1,5 @@
 /**
- * AI Copilot Slide-Over Drawer Component
+ * AI Insight Slide-Over Drawer Component
  * Always leave behind comments on all changes and development of workflows for efficient long-term coding
  *
  * Implements standard Universal AI Architecture (Tier Hierarchy Standard):

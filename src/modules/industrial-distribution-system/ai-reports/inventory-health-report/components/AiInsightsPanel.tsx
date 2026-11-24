@@ -5,7 +5,7 @@
  * Implements:
  * - Collapsible banner on top of the results grid displaying immediate AI findings
  * - Clean typography and formatted bullet rendering
- * - Shortcut button to open the full slide-over AI Copilot Drawer
+ * - Shortcut button to open the full slide-over AI Insight Drawer
  */
 
 'use client';
@@ -43,7 +43,7 @@ export const AiInsightsPanel: React.FC<AiInsightsPanelProps> = ({
 
     if (!aiInsight) return null;
 
-    const summary = aiInsight.summary || 'Enterprise inventory analysis complete.';
+    const summary = aiInsight.summary || 'Open AI Insight Panel to view analysis.';
     const highlights = aiInsight.keyHighlights || [];
 
     return (
@@ -55,10 +55,8 @@ export const AiInsightsPanel: React.FC<AiInsightsPanelProps> = ({
                     </div>
                     <div className="space-y-1">
                         <div className="flex items-center gap-2">
-                            <h2 className="text-sm font-bold text-foreground">Gemini AI Executive Insights</h2>
-                            <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-purple-100 text-purple-800 dark:bg-purple-900/50 dark:text-purple-300">
-                                {aiInsight.tierName} Tier
-                            </span>
+                            <h2 className="text-sm font-bold text-foreground">AI Executive Insights</h2>
+ 
                             {aiInsight.isFallback && (
                                 <span className="text-[10px] font-semibold px-2 py-0.5 rounded-full bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-300">
                                     Deterministic Fallback
@@ -77,7 +75,7 @@ export const AiInsightsPanel: React.FC<AiInsightsPanelProps> = ({
                         onClick={onOpenFullCopilot}
                         className="inline-flex items-center gap-1 px-3 py-1.5 text-xs font-semibold rounded-lg bg-purple-600 text-white hover:bg-purple-700 transition-colors shadow-2xs cursor-pointer"
                     >
-                        <span>Open AI Copilot</span>
+                        <span>Open AI Insight</span>
                         <ArrowRight className="h-3.5 w-3.5" />
                     </button>
                     <button
