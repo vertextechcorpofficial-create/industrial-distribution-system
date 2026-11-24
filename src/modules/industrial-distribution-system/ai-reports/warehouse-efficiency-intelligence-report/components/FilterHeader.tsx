@@ -31,7 +31,6 @@ import {
     SlidersHorizontal,
     Calendar,
     RotateCcw,
-    X,
 } from 'lucide-react';
 
 interface FilterHeaderProps {

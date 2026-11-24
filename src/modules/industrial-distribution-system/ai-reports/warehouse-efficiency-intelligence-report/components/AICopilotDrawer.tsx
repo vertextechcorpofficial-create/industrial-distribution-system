@@ -26,10 +26,6 @@ import {
     User,
     ShieldAlert,
     Clock,
-    Activity,
-    Layers,
-    Lock,
-    ArrowUpRight,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';

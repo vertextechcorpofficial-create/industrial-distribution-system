@@ -11,7 +11,7 @@
 
 import React from 'react';
 import { AiInsightResponse, AiTierSlug } from '../types';
-import { Sparkles, ArrowRight, CheckCircle2, Lock } from 'lucide-react';
+import { Sparkles, ArrowRight, CheckCircle2 } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 

@@ -23,6 +23,8 @@ import {
     WarehouseEfficiencyRow,
     BottleneckTag,
     AiTierSlug,
+    ShiftType,
+    UnitTypeCategory,
 } from '@/modules/industrial-distribution-system/ai-reports/warehouse-efficiency-intelligence-report/types';
 
 function formatToMMDDYYYY(isoDate?: string): string {
@@ -190,7 +192,6 @@ export async function GET(req: NextRequest) {
         }
 
         const validBranchIds = new Set(branches.map((b) => b.id));
-        const branchMap = new Map(branches.map((b) => [b.id, b]));
 
         // Filter by specific branch if chosen
         const scopedBranchIds = branchIdParam && validBranchIds.has(Number(branchIdParam))
@@ -549,8 +550,8 @@ export async function GET(req: NextRequest) {
                 startDate,
                 endDate,
                 branchId: branchIdParam || undefined,
-                shift: shiftParam as any,
-                unitType: unitTypeParam as any,
+                shift: shiftParam as ShiftType,
+                unitType: unitTypeParam as UnitTypeCategory,
                 bottleneck: bottleneckParam !== 'ALL' ? bottleneckParam : undefined,
             },
             kpis: {

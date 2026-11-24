@@ -11,7 +11,7 @@
 import { WarehouseEfficiencyReportPayload } from '../types';
 
 export function generateWarehouseEfficiencyPrintHtml(report: WarehouseEfficiencyReportPayload): string {
-    const { kpis, rows, filter } = report;
+    const { kpis, rows } = report;
 
     const rowsHtml = rows
         .map(

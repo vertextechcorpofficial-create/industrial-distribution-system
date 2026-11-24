@@ -27,10 +27,7 @@ import {
     Clock,
     Layers,
     AlertCircle,
-    Truck,
-    PackageCheck,
     CheckCircle2,
-    Users,
 } from 'lucide-react';
 
 interface DetailDrawerProps {
