@@ -68,7 +68,7 @@ export async function exportCustomerCylinderAgingPDF(
     doc.setFont("helvetica", "bold");
     doc.setFontSize(13);
     doc.setTextColor(15, 23, 42); // slate-900
-    const companyTitle = (company.company_name || "INDUSTRIAL GAS DISTRIBUTION SYSTEM").toUpperCase();
+    const companyTitle = (company.company_name || "-").toUpperCase();
     doc.text(companyTitle, headerTextX, currentY + 4);
 
     // Corporate Address

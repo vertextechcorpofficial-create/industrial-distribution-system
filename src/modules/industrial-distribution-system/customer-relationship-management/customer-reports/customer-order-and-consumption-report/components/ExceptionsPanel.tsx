@@ -20,7 +20,7 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { useCustomerOrderConsumptionReport } from "../hooks/useCustomerOrderConsumptionReport";
-import { formatKgCompact, formatQty } from "../services/customer-order-consumption.helpers";
+import { formatKgCompact } from "../services/customer-order-consumption.helpers";
 import type { ExceptionCode} from "../types/customer-order-consumption.types";
 
 function SeverityBadge({ code }: { code: ExceptionCode }) {
@@ -65,7 +65,6 @@ export function ExceptionsPanel(): React.ReactElement {
                 <TableHead className="text-xs font-semibold">Customer</TableHead>
                 <TableHead className="text-xs font-semibold">Reference</TableHead>
                 <TableHead className="text-xs font-semibold">Details &amp; Audit Advisory</TableHead>
-                <TableHead className="text-xs font-semibold text-right">Units</TableHead>
                 <TableHead className="text-xs font-semibold text-right">Weight (Kg)</TableHead>
               </TableRow>
             </TableHeader>
@@ -98,9 +97,6 @@ export function ExceptionsPanel(): React.ReactElement {
                   </TableCell>
                   <TableCell className="py-2 text-xs text-muted-foreground max-w-sm">
                     {e.detail}
-                  </TableCell>
-                  <TableCell className="py-2 text-right text-xs tabular-nums">
-                    {e.quantity > 0 ? formatQty(e.quantity) : "—"}
                   </TableCell>
                   <TableCell className="py-2 text-right text-xs tabular-nums font-medium">
                     {e.kg > 0 ? formatKgCompact(e.kg) : "—"}

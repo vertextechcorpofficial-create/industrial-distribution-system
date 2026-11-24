@@ -22,6 +22,7 @@ import {
   ChevronRight,
   ClipboardList,
   FileCheck2,
+  Filter,
   Flame,
   Gauge,
   GitBranch,
@@ -623,10 +624,40 @@ export function CustomerOrderConsumptionDrawer(): React.ReactElement {
     isDrillDownLoading,
     drillDownError,
     closeDrillDown,
+    openDrillDown,
   } = useCustomerOrderConsumptionReport();
 
   const isOpen = drillDownTarget !== null;
   const docs = drillDownDetail?.documents ?? EMPTY_DOCS;
+
+  // Selected product filter for drill-down scope: defaults to drillDownTarget.productId if specified
+  const [selectedProductId, setSelectedProductId] = React.useState<number | "ALL">("ALL");
+
+  React.useEffect(() => {
+    setSelectedProductId(drillDownTarget?.productId ?? "ALL");
+  }, [drillDownTarget?.productId, drillDownTarget?.customerCode]);
+
+  // Distinct products available in the loaded document set
+  const availableProducts = React.useMemo(() => {
+    const map = new Map<number, { id: number; name: string; count: number }>();
+    for (const d of docs) {
+      if (d.productId && d.productName) {
+        const existing = map.get(d.productId);
+        if (existing) {
+          existing.count += 1;
+        } else {
+          map.set(d.productId, { id: d.productId, name: d.productName, count: 1 });
+        }
+      }
+    }
+    return Array.from(map.values()).sort((a, b) => a.name.localeCompare(b.name));
+  }, [docs]);
+
+  // Active documents scoped to selected product line if filtered
+  const scopedDocs = React.useMemo(() => {
+    if (selectedProductId === "ALL") return docs;
+    return docs.filter((d) => d.productId === selectedProductId);
+  }, [docs, selectedProductId]);
 
   // All hooks unconditionally declared at top level per ids-guide
   const [viewMode, setViewMode] = React.useState<DrawerViewMode>("GROUPED");
@@ -637,21 +668,21 @@ export function CustomerOrderConsumptionDrawer(): React.ReactElement {
   const [pageSize, setPageSize] = React.useState<number>(10);
   const [expandedChains, setExpandedChains] = React.useState<Set<string>>(new Set());
 
-  const chains = React.useMemo(() => buildTransactionChains(docs), [docs]);
+  const chains = React.useMemo(() => buildTransactionChains(scopedDocs), [scopedDocs]);
 
-  // Reset filters & pagination when switching drill-down target
+  // Reset filters & pagination when switching drill-down target or product scope
   React.useEffect(() => {
     setViewMode("GROUPED");
     setChainFilter("ALL");
     setFlatTab("ALL");
     setSearchTerm("");
     setPage(0);
-  }, [drillDownTarget?.customerCode, drillDownTarget?.productId]);
+  }, [drillDownTarget?.customerCode, drillDownTarget?.productId, selectedProductId]);
 
-  // Reset to page 0 whenever search, filter, view mode, or page size changes
+  // Reset to page 0 whenever search, filter, view mode, page size, or product scope changes
   React.useEffect(() => {
     setPage(0);
-  }, [viewMode, chainFilter, flatTab, searchTerm, pageSize]);
+  }, [viewMode, chainFilter, flatTab, searchTerm, pageSize, selectedProductId]);
 
   const normalizedSearch = searchTerm.trim().toLowerCase();
 
@@ -690,7 +721,7 @@ export function CustomerOrderConsumptionDrawer(): React.ReactElement {
     let grossKg = 0;
     let returnedKg = 0;
 
-    for (const d of docs) {
+    for (const d of scopedDocs) {
       if (d.documentType === "SALES_ORDER") {
         orderDocs += 1;
       } else if (d.documentType === "SALES_INVOICE") {
@@ -712,10 +743,10 @@ export function CustomerOrderConsumptionDrawer(): React.ReactElement {
       lpgDocs,
       netKg: Math.max(0, grossKg - returnedKg),
     };
-  }, [docs]);
+  }, [scopedDocs]);
 
   const filteredFlatDocs = React.useMemo(() => {
-    return docs.filter((d) => {
+    return scopedDocs.filter((d) => {
       if (flatTab === "ORDERS" && d.documentType !== "SALES_ORDER") return false;
       if (flatTab === "INVOICES" && d.documentType !== "SALES_INVOICE") return false;
       if (flatTab === "RETURNS" && d.documentType !== "SALES_RETURN") return false;
@@ -729,7 +760,7 @@ export function CustomerOrderConsumptionDrawer(): React.ReactElement {
       if (normalizedSearch && !docMatchesQuery(d, normalizedSearch)) return false;
       return true;
     });
-  }, [docs, flatTab, normalizedSearch]);
+  }, [scopedDocs, flatTab, normalizedSearch]);
 
   // Pagination slice for the active view
   const activeTotal = viewMode === "GROUPED" ? filteredChains.length : filteredFlatDocs.length;
@@ -830,6 +861,41 @@ export function CustomerOrderConsumptionDrawer(): React.ReactElement {
         {/* Fixed Summary Strip + Search & View Controls */}
         {!isDrillDownLoading && !drillDownError ? (
           <div className="px-5 py-3 border-b bg-muted/15 space-y-3 shrink-0">
+            {/* Active Product Scope Alert Banner */}
+            {selectedProductId !== "ALL" || drillDownTarget?.productId ? (
+              <div className="flex items-center justify-between gap-2 px-3 py-1.5 rounded-md bg-blue-50/80 border border-blue-200 text-xs text-blue-900">
+                <div className="flex items-center gap-1.5 min-w-0">
+                  <Filter className="size-3.5 text-blue-600 shrink-0" />
+                  <span className="truncate">
+                    Product Scope:{" "}
+                    <strong className="font-semibold text-blue-950">
+                      {drillDownTarget?.productName ||
+                        availableProducts.find((p) => p.id === selectedProductId)?.name ||
+                        `Product #${selectedProductId}`}
+                    </strong>
+                  </span>
+                </div>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  className="h-6 px-2 text-xs text-blue-700 hover:text-blue-900 hover:bg-blue-100/60 font-medium shrink-0 gap-1"
+                  onClick={() => {
+                    setSelectedProductId("ALL");
+                    if (drillDownTarget?.productId) {
+                      openDrillDown({
+                        customerCode: drillDownTarget.customerCode,
+                        customerName: drillDownTarget.customerName,
+                      });
+                    }
+                  }}
+                >
+                  <X className="size-3" />
+                  View All Products
+                </Button>
+              </div>
+            ) : null}
+
             {/* Quick Totals Strip */}
             <div className="grid grid-cols-3 sm:grid-cols-6 gap-2">
               <div className="rounded-md border bg-background px-3 py-2">
@@ -882,12 +948,12 @@ export function CustomerOrderConsumptionDrawer(): React.ReactElement {
                     </TabsTrigger>
                     <TabsTrigger value="FLAT" className="text-xs h-7 px-3 gap-1.5">
                       <List className="size-3.5" />
-                      All Documents ({docs.length})
+                      All Documents ({scopedDocs.length})
                     </TabsTrigger>
                   </TabsList>
                 </Tabs>
 
-                {/* Instant Search Bar */}
+                {/* Instant Search Bar & Product Scope Selector */}
                 <div className="flex items-center gap-2 flex-1 sm:flex-initial sm:min-w-[300px] lg:min-w-[360px]">
                   <div className="relative flex-1">
                     <Search className="size-3.5 text-muted-foreground absolute left-2.5 top-1/2 -translate-y-1/2 pointer-events-none" />
@@ -908,6 +974,34 @@ export function CustomerOrderConsumptionDrawer(): React.ReactElement {
                       </button>
                     ) : null}
                   </div>
+
+                  {availableProducts.length > 1 ? (
+                    <Select
+                      value={String(selectedProductId)}
+                      onValueChange={(val) => {
+                        setSelectedProductId(val === "ALL" ? "ALL" : Number(val));
+                      }}
+                    >
+                      <SelectTrigger className="h-8 text-xs w-[170px] sm:w-[200px] shrink-0 bg-background">
+                        <div className="flex items-center gap-1.5 truncate">
+                          <Filter className="size-3 text-muted-foreground shrink-0" />
+                          <span className="truncate">
+                            {selectedProductId === "ALL"
+                              ? "All Products"
+                              : availableProducts.find((p) => p.id === selectedProductId)?.name ?? "Product"}
+                          </span>
+                        </div>
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="ALL">All Products ({docs.length})</SelectItem>
+                        {availableProducts.map((p) => (
+                          <SelectItem key={p.id} value={String(p.id)}>
+                            {p.name} ({p.count})
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  ) : null}
 
                   {viewMode === "GROUPED" && paginatedChains.length > 0 ? (
                     <Button
@@ -950,7 +1044,7 @@ export function CustomerOrderConsumptionDrawer(): React.ReactElement {
                 <div className="flex flex-wrap items-center gap-1.5">
                   {(
                     [
-                      { id: "ALL", label: `All (${docs.length})` },
+                      { id: "ALL", label: `All (${scopedDocs.length})` },
                       { id: "ORDERS", label: `Orders (${summaryCounts.orderDocs})` },
                       { id: "INVOICES", label: `Invoices (${summaryCounts.invoiceDocs})` },
                       { id: "RETURNS", label: `Returns (${summaryCounts.returnDocs})` },

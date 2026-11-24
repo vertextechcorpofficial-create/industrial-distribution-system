@@ -26,7 +26,16 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { useCustomerOrderConsumptionReport } from "../hooks/useCustomerOrderConsumptionReport";
 import { formatKgCompact, formatQty } from "../services/customer-order-consumption.helpers";
 
-const COLORS = ["#2563eb", "#16a34a", "#ea580c", "#8b5cf6", "#06b6d4"];
+const COLORS = [
+  "#2563eb",
+  "#10b981",
+  "#f59e0b",
+  "#8b5cf6",
+  "#06b6d4",
+  "#ec4899",
+  "#6366f1",
+  "#14b8a6",
+];
 
 const EMPTY_TREND: never[] = [];
 const EMPTY_ROWS: never[] = [];
@@ -91,13 +100,13 @@ export function ConsumptionTrendChart(): React.ReactElement {
       }));
   }, [monthlyTrend]);
 
-  // Cylinder size breakdown across all industrial parent products (including Metered/WIWO-billed parent cylinders)
+  // Cylinder size breakdown across all industrial parent products (strictly positive volumes)
   const sizeBreakdown = React.useMemo(() => {
     const sizeMap = new Map<string, number>();
 
     for (const r of rows) {
       for (const p of r.products) {
-        if (p.cylinderSizeKg && p.netKg > 0) {
+        if (p.cylinderSizeKg && p.netKg > 0.001) {
           const label = `${p.cylinderSizeKg} kg`;
           sizeMap.set(label, (sizeMap.get(label) ?? 0) + p.netKg);
         }
@@ -105,9 +114,15 @@ export function ConsumptionTrendChart(): React.ReactElement {
     }
 
     return [...sizeMap.entries()]
+      .filter(([, value]) => value > 0)
       .map(([name, value]) => ({ name, value: Math.round(value * 100) / 100 }))
       .sort((a, b) => b.value - a.value);
   }, [rows]);
+
+  // Total cylinder net weight for precise percentage formatting across all slices
+  const totalCylinderKg = React.useMemo(() => {
+    return sizeBreakdown.reduce((sum, item) => sum + item.value, 0);
+  }, [sizeBreakdown]);
 
   if (!report) return <></>;
 
@@ -226,19 +241,41 @@ export function ConsumptionTrendChart(): React.ReactElement {
                       nameKey="name"
                       cx="50%"
                       cy="45%"
-                      outerRadius={85}
-                      innerRadius={45}
-                      paddingAngle={3}
-                      label={(entry) => `${entry.name} (${Math.round(entry.percent * 100)}%)`}
+                      outerRadius={82}
+                      innerRadius={44}
+                      paddingAngle={2}
+                      minAngle={5}
+                      labelLine
                       animationDuration={500}
                     >
                       {sizeBreakdown.map((_, index) => (
                         <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
                       ))}
                     </Pie>
-                    {/* Format pie tooltip weight using Recharts' inferred value type */}
-                    <Tooltip formatter={(val) => formatKgCompact(Number(val) || 0)} />
-                    <Legend wrapperStyle={{ fontSize: 11 }} />
+                    {/* Tooltip shows exact kilograms and precise share percentage */}
+                    <Tooltip
+                      formatter={(val, name) => {
+                        const num = Number(val) || 0;
+                        const pct = totalCylinderKg > 0 ? (num / totalCylinderKg) * 100 : 0;
+                        const pctStr = pct < 0.1 ? "<0.1%" : `${pct.toFixed(1)}%`;
+                        return [`${formatKgCompact(num)} (${pctStr})`, `${name}`];
+                      }}
+                    />
+                    {/* Legend clearly lists every segment with its exact share so small slices remain fully readable without overlap */}
+                    <Legend
+                      wrapperStyle={{ fontSize: 11, paddingTop: 6 }}
+                      formatter={(value, entry) => {
+                        const val = Number(entry?.payload?.value) || 0;
+                        const pct = totalCylinderKg > 0 ? (val / totalCylinderKg) * 100 : 0;
+                        const pctStr = pct < 0.1 ? "<0.1%" : `${pct.toFixed(1)}%`;
+                        return (
+                          <span className="text-xs font-medium text-foreground">
+                            {value}{" "}
+                            <span className="text-muted-foreground font-normal">({pctStr})</span>
+                          </span>
+                        );
+                      }}
+                    />
                   </PieChart>
                 </ResponsiveContainer>
               </div>

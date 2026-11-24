@@ -481,7 +481,7 @@ export function aggregateSalesPerformanceReport(
   const gasMap = new Map<string, { kg: number; net: number }>();
   for (const r of filteredRecords) {
     if (r.kgSold <= 0) continue;
-    const key = r.productName || "Other Industrial Gas";
+    const key = r.productName || "-";
     const entry = gasMap.get(key) || { kg: 0, net: 0 };
     entry.kg += r.kgSold;
     entry.net += r.netSales;

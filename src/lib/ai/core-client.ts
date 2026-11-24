@@ -5,7 +5,7 @@
  * Implements:
  * - Enterprise model orchestration with automatic fallback cascade
  * - GDPR sanitization of inputs
- * - EU AI Act Article 14 Human-in-the-Loop governance metadata
+
  * - Zero-crash deterministic fallback guarantee
  */
 
