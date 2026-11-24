@@ -293,7 +293,7 @@ export const AiInsightsPanel: React.FC<AiInsightsPanelProps> = ({
                             <div className="flex items-start gap-2.5 p-3.5 rounded-xl bg-purple-50/60 dark:bg-purple-950/30 border border-purple-200/60 text-xs">
                                 <Bot className="h-4 w-4 text-purple-600 mt-0.5 shrink-0" />
                                 <div className="space-y-1 text-purple-950 dark:text-purple-200">
-                                    <p className="font-semibold">Welcome to the Executive Copilot Chat.</p>
+                                    <p className="font-semibold">Welcome to the Executive AI Insight Chat.</p>
                                     <p className="text-muted-foreground text-[11px]">
                                         Ask direct questions regarding supplier reliability, lead-time variances, and negotiation strategies. Messages remain active during this session and reset upon closing.
                                     </p>
@@ -353,7 +353,7 @@ export const AiInsightsPanel: React.FC<AiInsightsPanelProps> = ({
                                     <Sparkles className="h-3.5 w-3.5 text-amber-200" />
                                 </div>
                                 <div className="rounded-2xl px-4 py-2.5 bg-white dark:bg-purple-950/50 border border-purple-200 text-xs text-muted-foreground rounded-tl-none animate-pulse">
-                                    Analyzing operational data with Gemini...
+                                    Analyzing operational data...
                                 </div>
                             </div>
                         )}

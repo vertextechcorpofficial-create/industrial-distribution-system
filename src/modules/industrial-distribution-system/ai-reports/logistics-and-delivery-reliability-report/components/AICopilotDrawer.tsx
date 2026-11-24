@@ -1,5 +1,5 @@
 /**
- * AI Copilot Slide-Over Drawer Component — Logistics and Delivery Reliability
+ * AI Insight Slide-Over Drawer Component — Logistics and Delivery Reliability
  * Always leave behind comments on all changes and development of workflows for efficient long-term coding
  *
  * Implements standard Universal AI Architecture (Tier Hierarchy Standard):
@@ -52,7 +52,6 @@ interface AICopilotDrawerProps {
 // Quick Suggestion Chips for the Interactive Chat
 const QUICK_PROMPTS = [
     'Which route is least reliable?',
-    'Why are trips arriving late?',
     'Branch vs road: where is the delay?',
     'What does delivery cost per unit?',
 ];
@@ -166,7 +165,7 @@ export const AICopilotDrawer: React.FC<AICopilotDrawerProps> = ({
     const isExecutive = activeTier === 'executive';
     const isPro = activeTier === 'pro';
     const isBasic = activeTier === 'basic';
- 
+
 
     // Track the last incorporated Q&A response
     const [processedQa, setProcessedQa] = useState<string | null>(null);
@@ -253,7 +252,7 @@ export const AICopilotDrawer: React.FC<AICopilotDrawerProps> = ({
                                     <h2 className="text-sm sm:text-base font-bold text-foreground tracking-tight">
                                         AI Logistics &amp; Delivery Analyst
                                     </h2>
- 
+
                                 </div>
                                 <p className="text-[11px] text-muted-foreground mt-0.5">
                                     Real-time intelligence and interactive recommendations
@@ -818,7 +817,7 @@ export const AICopilotDrawer: React.FC<AICopilotDrawerProps> = ({
                 {/* 3. Footer Action Bar (Matches Reference Guide) */}
                 {activeTab === 'report' && (
                     <div className="p-3.5 sm:p-4 border-t bg-muted/30 shrink-0 space-y-2.5">
- 
+
                         <div className="flex items-center justify-between gap-2">
                             <div>
                                 {isExecutive && (

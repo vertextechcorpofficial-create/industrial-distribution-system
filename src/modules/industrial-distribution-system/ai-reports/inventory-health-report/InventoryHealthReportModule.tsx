@@ -4,7 +4,7 @@
  *
  * Implements:
  * - Real-time state coordination for filters, live metrics, and drawer views
- * - Centralized Core AI integration and slide-over Copilot Drawer
+ * - Centralized Core AI integration and slide-over  Drawer
  * - High-fidelity print/export PDF generator
  * - Strict adherence to React Hook ordering rules (zero conditional hooks or hooks after early returns)
  *
@@ -135,7 +135,7 @@ export const InventoryHealthReportModule: React.FC = () => {
         setIsDrawerOpen(true);
     };
 
-    // Trigger AI Copilot analysis (Drawer Open + Load Insights)
+    // Trigger AI Insight analysis (Drawer Open + Load Insights)
     const handleRunAi = async () => {
         setIsAiDrawerOpen(true);
         if (!reportData) return;
@@ -300,7 +300,7 @@ export const InventoryHealthReportModule: React.FC = () => {
                 sku={selectedSku}
             />
 
-            {/* Enterprise Slide-Over AI Copilot Drawer */}
+            {/* Enterprise Slide-Over AI Insight Drawer */}
             <AICopilotDrawer
                 isOpen={isAiDrawerOpen}
                 insights={aiInsight}

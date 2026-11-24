@@ -1,5 +1,5 @@
 /**
- * AI Copilot Slide-Over Drawer Component for Demand Forecast Intelligence Report
+ * AI Insight Slide-Over Drawer Component for Demand Forecast Intelligence Report
  * Always leave behind comments on all changes and development of workflows for efficient long-term coding
  *
  * Implements standard Universal AI Architecture (Tier Hierarchy Standard):
@@ -166,8 +166,8 @@ export const AICopilotDrawer: React.FC<AICopilotDrawerProps> = ({
     const isExecutive = activeTier === 'executive';
     const isPro = activeTier === 'pro';
     const isBasic = activeTier === 'basic';
- 
- 
+
+
 
     // Track incorporation of new QA answer
     if (insights?.qaAnswer && insights.userQuery && processedQa !== insights.qaAnswer) {
@@ -268,11 +268,10 @@ export const AICopilotDrawer: React.FC<AICopilotDrawerProps> = ({
                                     <button
                                         type="button"
                                         onClick={() => setActiveTab('report')}
-                                        className={`flex items-center gap-1.5 px-3 py-1 rounded-md text-xs font-semibold transition-all ${
-                                            activeTab === 'report'
+                                        className={`flex items-center gap-1.5 px-3 py-1 rounded-md text-xs font-semibold transition-all ${activeTab === 'report'
                                                 ? 'bg-background text-foreground shadow-xs font-bold'
                                                 : 'text-muted-foreground hover:text-foreground'
-                                        }`}
+                                            }`}
                                     >
                                         <FileText className="h-3.5 w-3.5" />
                                         <span>Executive Report</span>
@@ -280,11 +279,10 @@ export const AICopilotDrawer: React.FC<AICopilotDrawerProps> = ({
                                     <button
                                         type="button"
                                         onClick={() => setActiveTab('chat')}
-                                        className={`flex items-center gap-1.5 px-3 py-1 rounded-md text-xs font-semibold transition-all ${
-                                            activeTab === 'chat'
+                                        className={`flex items-center gap-1.5 px-3 py-1 rounded-md text-xs font-semibold transition-all ${activeTab === 'chat'
                                                 ? 'bg-background text-purple-600 dark:text-purple-400 shadow-xs font-bold'
                                                 : 'text-muted-foreground hover:text-foreground'
-                                        }`}
+                                            }`}
                                     >
                                         <MessageSquare className="h-3.5 w-3.5" />
                                         <span>Ask AI Chatbot</span>
@@ -335,16 +333,14 @@ export const AICopilotDrawer: React.FC<AICopilotDrawerProps> = ({
                             {[initialGreeting, ...chatMessages].map((msg) => (
                                 <div
                                     key={msg.id}
-                                    className={`flex gap-2.5 max-w-[88%] ${
-                                        msg.role === 'user' ? 'ml-auto flex-row-reverse' : 'mr-auto'
-                                    }`}
+                                    className={`flex gap-2.5 max-w-[88%] ${msg.role === 'user' ? 'ml-auto flex-row-reverse' : 'mr-auto'
+                                        }`}
                                 >
                                     <div
-                                        className={`h-7 w-7 rounded-lg flex items-center justify-center shrink-0 ${
-                                            msg.role === 'user'
+                                        className={`h-7 w-7 rounded-lg flex items-center justify-center shrink-0 ${msg.role === 'user'
                                                 ? 'bg-purple-600 text-white'
                                                 : 'bg-muted text-foreground border'
-                                        }`}
+                                            }`}
                                     >
                                         {msg.role === 'user' ? (
                                             <User className="h-4 w-4" />
@@ -354,11 +350,10 @@ export const AICopilotDrawer: React.FC<AICopilotDrawerProps> = ({
                                     </div>
                                     <div className="space-y-1">
                                         <div
-                                            className={`p-3.5 rounded-2xl ${
-                                                msg.role === 'user'
+                                            className={`p-3.5 rounded-2xl ${msg.role === 'user'
                                                     ? 'bg-purple-600 text-white rounded-tr-none'
                                                     : 'bg-card border border-border text-foreground shadow-xs rounded-tl-none leading-relaxed'
-                                            }`}
+                                                }`}
                                         >
                                             {renderFormattedText(msg.content)}
                                         </div>
@@ -505,7 +500,7 @@ export const AICopilotDrawer: React.FC<AICopilotDrawerProps> = ({
                                                                     category: 'Avg Replenishment Coverage',
                                                                     actual:
                                                                         reportPayload?.kpis.avgReplenishmentCoverage !== null &&
-                                                                        reportPayload?.kpis.avgReplenishmentCoverage !== undefined
+                                                                            reportPayload?.kpis.avgReplenishmentCoverage !== undefined
                                                                             ? `${reportPayload.kpis.avgReplenishmentCoverage.toFixed(1)}%`
                                                                             : 'N/A',
                                                                     target: '≥ 80.0% Benchmark',
@@ -529,7 +524,7 @@ export const AICopilotDrawer: React.FC<AICopilotDrawerProps> = ({
                                                                     target: 'Safety Buffer Target',
                                                                     status:
                                                                         (reportPayload?.kpis.totalStockOnHand ?? 0) >=
-                                                                        (reportPayload?.kpis.totalDemandQty ?? 0)
+                                                                            (reportPayload?.kpis.totalDemandQty ?? 0)
                                                                             ? 'Healthy'
                                                                             : 'Elevated Risk',
                                                                 },
@@ -540,14 +535,13 @@ export const AICopilotDrawer: React.FC<AICopilotDrawerProps> = ({
                                                                     <td className="px-3 py-2 text-muted-foreground">{m.target}</td>
                                                                     <td className="px-3 py-2">
                                                                         <span
-                                                                            className={`inline-block px-2 py-0.5 rounded-full text-[10px] font-semibold ${
-                                                                                m.status.includes('Favorable') ||
-                                                                                m.status.includes('Adequate') ||
-                                                                                m.status.includes('Healthy') ||
-                                                                                m.status.includes('Stable')
+                                                                            className={`inline-block px-2 py-0.5 rounded-full text-[10px] font-semibold ${m.status.includes('Favorable') ||
+                                                                                    m.status.includes('Adequate') ||
+                                                                                    m.status.includes('Healthy') ||
+                                                                                    m.status.includes('Stable')
                                                                                     ? 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border border-emerald-500/20'
                                                                                     : 'bg-rose-500/10 text-rose-600 dark:text-rose-400 border border-rose-500/20'
-                                                                            }`}
+                                                                                }`}
                                                                         >
                                                                             {m.status}
                                                                         </span>
@@ -741,11 +735,10 @@ export const AICopilotDrawer: React.FC<AICopilotDrawerProps> = ({
                                                                     </span>
                                                                     <Badge
                                                                         variant="outline"
-                                                                        className={`text-[8px] uppercase font-bold ${
-                                                                            impact === 'high'
+                                                                        className={`text-[8px] uppercase font-bold ${impact === 'high'
                                                                                 ? 'text-rose-600 border-rose-300'
                                                                                 : 'text-amber-600 border-amber-300'
-                                                                        }`}
+                                                                            }`}
                                                                     >
                                                                         {impact} Impact
                                                                     </Badge>
@@ -769,11 +762,11 @@ export const AICopilotDrawer: React.FC<AICopilotDrawerProps> = ({
                                                         const isObj = typeof act === 'object' && act !== null;
                                                         const actionText = isObj
                                                             ? (act as AIObservation).recommendedAction ||
-                                                              (act as AIObservation).finding
+                                                            (act as AIObservation).finding
                                                             : String(act);
                                                         const owner = isObj
                                                             ? (act as AIObservation).department ||
-                                                              (act as AIObservation).suggestedOwner
+                                                            (act as AIObservation).suggestedOwner
                                                             : 'Inventory Management';
 
                                                         return (

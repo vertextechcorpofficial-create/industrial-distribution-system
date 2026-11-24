@@ -3,7 +3,7 @@
  * Always leave behind comments on all changes and development of workflows for efficient long-term coding
  *
  * Implements:
- * - Two-screen segmented AI Copilot (Executive Overview vs Interactive Q&A)
+ * - Two-screen segmented AI Insight (Executive Overview vs Interactive Q&A)
  * - Centralized Core AI integration
  * - Print/PDF generator with company header
  * - Smart active record sorting and pagination
@@ -100,7 +100,7 @@ export const SupplierPerformanceReportModule: React.FC = () => {
         setIsDrawerOpen(true);
     };
 
-    // Trigger standard AI Copilot analysis (Drawer Open + Load Insights)
+    // Trigger standard AI Insight analysis (Drawer Open + Load Insights)
     const handleRunAi = async () => {
         setIsAiDrawerOpen(true);
         if (!reportData) return;
@@ -227,7 +227,7 @@ export const SupplierPerformanceReportModule: React.FC = () => {
                 supplier={selectedSupplier}
             />
 
-            {/* Enterprise Slide-Over AI Copilot Drawer */}
+            {/* Enterprise Slide-Over AI Insight Drawer */}
             <AICopilotDrawer
                 isOpen={isAiDrawerOpen}
                 insights={aiInsight}

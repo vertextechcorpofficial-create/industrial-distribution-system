@@ -5,7 +5,7 @@
  * Implements:
  * - Current month default date range (1st to last day of current month)
  * - Explicit filter application: only fetches data when the user clicks "Apply Filters" or "Refresh"
- * - Two-screen segmented AI Copilot (Executive Overview vs Interactive Q&A)
+ * - Two-screen segmented AI Insight (Executive Overview vs Interactive Q&A)
  * - Centralized Core AI integration via runCoreAiAnalysis (@/lib/ai)
  * - Printable PDF generator with company header and formatted KPI scorecard
  * - Smart product demand and on-hand stock grid with sorting and pagination
@@ -132,7 +132,7 @@ export const DemandForecastReportModule: React.FC = () => {
         setIsDrawerOpen(true);
     };
 
-    // Trigger standard AI Copilot analysis (Drawer Open + Load Insights)
+    // Trigger standard AI Insight analysis (Drawer Open + Load Insights)
     const handleRunAi = async () => {
         setIsAiDrawerOpen(true);
         if (!reportData) return;
@@ -291,7 +291,7 @@ export const DemandForecastReportModule: React.FC = () => {
                 product={selectedProduct}
             />
 
-            {/* Enterprise Slide-Over AI Copilot Drawer */}
+            {/* Enterprise Slide-Over AI Insight Drawer */}
             <AICopilotDrawer
                 isOpen={isAiDrawerOpen}
                 insights={aiInsight}

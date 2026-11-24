@@ -115,7 +115,7 @@ export const FilterHeader: React.FC<FilterHeaderProps> = ({
                         className="inline-flex items-center gap-1.5 px-4 py-2 text-xs font-semibold rounded-lg bg-purple-600 text-white hover:bg-purple-700 shadow-xs transition-all disabled:opacity-40"
                     >
                         <Sparkles className={`h-3.5 w-3.5 ${isAiLoading ? 'animate-spin text-amber-200' : 'text-amber-300'}`} />
-                        {isAiLoading ? 'Gemini Analyzing...' : 'AI Copilot'}
+                        {isAiLoading ? 'Analyzing...' : 'AI Insight'}
                     </button>
                 </div>
             </div>

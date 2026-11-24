@@ -8,7 +8,7 @@
  * - Industrial Branch selector (Column 2)
  * - Start Date & End Date pickers (Columns 3 & 4)
  * - Risk Band Filter (Column 5)
- * - Responsive toolbar with Refresh and AI Copilot trigger
+ * - Responsive toolbar with Refresh and AI Insight trigger
  *
  * Loading contract: nothing here fetches on its own. The controls edit the draft filter,
  * Apply Filters hands that draft to the parent, and Refresh re-runs the applied scope.
@@ -75,7 +75,7 @@ export const FilterHeader: React.FC<FilterHeaderProps> = ({
                 <div>
                     <h1 className="text-xl font-bold text-foreground">Inventory Health Report</h1>
                     <p className="text-xs text-muted-foreground mt-0.5">
-                        Detects stockout vulnerabilities, cylinder fleet balance, coverage days, and dead stock with Gemini AI.
+                        Detects stockout vulnerabilities, cylinder fleet balance, coverage days, and dead stock.
                     </p>
                 </div>
 
@@ -101,7 +101,7 @@ export const FilterHeader: React.FC<FilterHeaderProps> = ({
                         Refresh
                     </button>
 
-                    {/* AI Copilot Trigger with colored sparkle icon */}
+                    {/* AI Insight Trigger with colored sparkle icon */}
                     <button
                         type="button"
                         onClick={onToggleAi}
@@ -109,7 +109,7 @@ export const FilterHeader: React.FC<FilterHeaderProps> = ({
                         className="inline-flex items-center gap-1.5 px-4 py-2 text-xs font-semibold rounded-lg bg-purple-600 text-white hover:bg-purple-700 shadow-xs transition-all disabled:opacity-50 cursor-pointer"
                     >
                         <Sparkles className={`h-3.5 w-3.5 ${isAiLoading ? 'animate-spin text-amber-200' : 'text-amber-300'}`} />
-                        {isAiLoading ? 'Gemini Analyzing...' : 'AI Copilot'}
+                        {isAiLoading ? 'Analyzing...' : 'AI Insight'}
                     </button>
                 </div>
             </div>
