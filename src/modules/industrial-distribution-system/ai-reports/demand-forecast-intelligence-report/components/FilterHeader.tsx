@@ -7,7 +7,7 @@
  * - ONLY applies filters when the user explicitly clicks the "Apply Filters" or "Refresh" button
  * - Defaults start date and end date to the current month
  * - Product search bar (instant client-side filter)
- * - Top Action Toolbar: Print/Export PDF, Refresh, and AI Copilot Trigger
+ * - Top Action Toolbar: Print/Export PDF, Refresh, and AI Insight Trigger
  * - Strict adherence to React Rules of Hooks (all hooks unconditional at component top)
  */
 
@@ -79,7 +79,7 @@ export const FilterHeader: React.FC<FilterHeaderProps> = ({
                     {/* Clean Title */}
                     <h1 className="text-xl font-bold text-foreground">Demand Forecast Intelligence Report</h1>
                     <p className="text-xs text-muted-foreground mt-0.5">
-                        Analyzes sales order demand velocity, PO replenishment coverage, and stock alignment with Gemini AI.
+                        Analyzes sales order demand velocity, PO replenishment coverage, and stock alignment.
                     </p>
                 </div>
 
@@ -105,7 +105,7 @@ export const FilterHeader: React.FC<FilterHeaderProps> = ({
                         Refresh
                     </button>
 
-                    {/* AI Copilot Trigger */}
+                    {/* AI Insight Trigger */}
                     <button
                         type="button"
                         onClick={onToggleAi}
@@ -113,7 +113,7 @@ export const FilterHeader: React.FC<FilterHeaderProps> = ({
                         className="inline-flex items-center gap-1.5 px-4 py-2 text-xs font-semibold rounded-lg bg-purple-600 text-white hover:bg-purple-700 shadow-xs transition-all disabled:opacity-50"
                     >
                         <Sparkles className={`h-3.5 w-3.5 ${isAiLoading ? 'animate-spin text-amber-200' : 'text-amber-300'}`} />
-                        {isAiLoading ? 'Gemini Analyzing...' : 'AI Copilot'}
+                        {isAiLoading ? 'Analyzing...' : 'AI Insight'}
                     </button>
                 </div>
             </div>

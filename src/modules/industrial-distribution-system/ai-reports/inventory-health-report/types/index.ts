@@ -8,7 +8,7 @@
  * - Approved service level safety stock recommendations and lead time variance
  * - Stockout probability forecast & deterministic risk bands
  * - Dead stock aging analysis and tied-up capital calculation
- * - Universal C-Suite AI Copilot multi-tier responses and HITL metadata
+ * - Universal C-Suite AI Insight multi-tier responses and HITL metadata
  */
 
 import { AiGovernanceMetadata } from '@/lib/ai';

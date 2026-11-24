@@ -1,5 +1,5 @@
 /**
- * Gemini Prompt Templates & Tier System Instructions — Demand Forecast Intelligence
+ * Prompt Templates & Tier System Instructions — Demand Forecast Intelligence
  * Always leave behind comments on all changes and development of workflows for efficient long-term coding
  *
  * Persona: Chief Demand Planning Officer / Senior Supply Chain Strategist

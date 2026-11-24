@@ -5,7 +5,7 @@
  * Revisions:
  * - Direct PDF/Print trigger calling the high-fidelity document generator with company header
  * - Search Supplier at start of row
- * - Clean title and single-icon AI Copilot
+ * - Clean title and single-icon AI Insight
  */
 
 'use client';
@@ -58,7 +58,7 @@ export const FilterHeader: React.FC<FilterHeaderProps> = ({
                     {/* Clean Title */}
                     <h1 className="text-xl font-bold text-foreground">Supplier Performance AI Report</h1>
                     <p className="text-xs text-muted-foreground mt-0.5">
-                        Evaluates OTIF scorecards, Return-To-Supplier (RTS) defect trends, and cost variance with Gemini AI.
+                        Evaluates OTIF scorecards, Return-To-Supplier (RTS) defect trends, and cost variance.
                     </p>
                 </div>
 
@@ -84,7 +84,7 @@ export const FilterHeader: React.FC<FilterHeaderProps> = ({
                         Refresh
                     </button>
 
-                    {/* AI Copilot Trigger with single colored icon */}
+                    {/* AI Insight Trigger with single colored icon */}
                     <button
                         type="button"
                         onClick={onToggleAi}
@@ -92,7 +92,7 @@ export const FilterHeader: React.FC<FilterHeaderProps> = ({
                         className="inline-flex items-center gap-1.5 px-4 py-2 text-xs font-semibold rounded-lg bg-purple-600 text-white hover:bg-purple-700 shadow-xs transition-all disabled:opacity-50"
                     >
                         <Sparkles className={`h-3.5 w-3.5 ${isAiLoading ? 'animate-spin text-amber-200' : 'text-amber-300'}`} />
-                        {isAiLoading ? 'Gemini Analyzing...' : 'AI Copilot'}
+                        {isAiLoading ? 'Analyzing...' : 'AI Insight'}
                     </button>
                 </div>
             </div>
