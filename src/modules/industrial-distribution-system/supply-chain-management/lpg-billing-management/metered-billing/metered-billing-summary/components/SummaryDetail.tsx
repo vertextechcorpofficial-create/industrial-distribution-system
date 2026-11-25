@@ -86,6 +86,17 @@ export function SummaryDetail({ txId, onClose }: Props) {
   const txTypeMeta = TX_TYPE_LABELS[tx.transaction_type] || TX_TYPE_LABELS.REGULAR_BILLING;
   const isOnboarding = tx.transaction_type === "ONBOARDING_BASELINE";
 
+  // DEV-RULE: Resolve display names for user (vos_database.user) and customer (vos_database.customer) with safe fallbacks
+  const recordedByName =
+    tx.created_by_user?.full_name ||
+    tx.created_by_name ||
+    (tx.created_by ? `User ID ${tx.created_by}` : "—");
+  const resolvedCustomerName =
+    tx.customer?.customer_name ||
+    tx.customer?.store_name ||
+    tx.customer_code ||
+    "—";
+
   // IDS-CHANGE: Resolve metered reading and PSI images using the new MTRD_READING_IMAGE and PSI_IMAGE types, with fallback to GENERAL_PHOTO
   const prevImg = tx.attachments?.find((a) => a.attachment_type === "MTRD_READING_IMAGE" || a.attachment_type === "GENERAL_PHOTO")?.directus_file_id;
   const psiImg = tx.attachments?.find((a) => a.attachment_type === "PSI_IMAGE" || a.attachment_type === "GENERAL_PHOTO")?.directus_file_id;
@@ -119,7 +130,8 @@ export function SummaryDetail({ txId, onClose }: Props) {
             </Badge>
           </div>
           <p className="text-xs text-zinc-500 dark:text-zinc-400">
-            Recorded by User ID {tx.created_by || "—"} on{" "}
+            {/* DEV-RULE: Render resolved user full name instead of raw numeric User ID */}
+            Recorded by {recordedByName} on{" "}
             {tx.created_date ? format(new Date(tx.created_date), "MMM dd, yyyy hh:mm a") : "—"}.
           </p>
         </div>
@@ -185,17 +197,30 @@ export function SummaryDetail({ txId, onClose }: Props) {
               <div className="grid grid-cols-2 md:grid-cols-4 gap-6 text-sm">
                 <div className="space-y-1">
                   <span className="text-xs text-zinc-400 font-semibold uppercase tracking-wider block">Customer</span>
-                  <span className="font-bold text-zinc-800 dark:text-zinc-200 block truncate">
-                    {tx.customer?.customer_name || tx.customer_code}
+                  {/* DEV-RULE: Show resolved customer name from vos_database.customer with full text tooltip */}
+                  <span
+                    className="font-bold text-zinc-800 dark:text-zinc-200 block truncate"
+                    title={resolvedCustomerName}
+                  >
+                    {resolvedCustomerName}
                   </span>
                   <span className="text-[11px] font-mono text-zinc-400">({tx.customer_code})</span>
                 </div>
                 <div className="space-y-1">
                   <span className="text-xs text-zinc-400 font-semibold uppercase tracking-wider block">LPG Site</span>
-                  <span className="font-bold text-zinc-800 dark:text-zinc-200 block truncate">
+                  <span
+                    className="font-bold text-zinc-800 dark:text-zinc-200 block truncate"
+                    title={tx.site?.site_name || undefined}
+                  >
                     {tx.site?.site_name || "—"}
                   </span>
-                  <span className="text-[11px] text-zinc-400">ID: {tx.lpg_site_id}</span>
+                  {/* DEV-RULE: Display site_address from lpg_customer_lpg_sites instead of raw lpg_site_id */}
+                  <span
+                    className="text-[11px] text-zinc-400 block truncate"
+                    title={tx.site?.site_address || undefined}
+                  >
+                    {tx.site?.site_address || "—"}
+                  </span>
                 </div>
                 <div className="space-y-1">
                   <span className="text-xs text-zinc-400 font-semibold uppercase tracking-wider block">Transaction Date</span>

@@ -91,6 +91,17 @@ export interface LpgTransactionHeader {
   sales_order_no?: string | null;
 }
 
+// DEV-RULE: Resolved user record from vos_database.user for audit attribution (created_by, posted_by, etc.)
+export interface ResolvedUserRef {
+  user_id: number;
+  user_fname: string;
+  user_mname?: string | null;
+  user_lname: string;
+  suffix_name?: string | null;
+  user_email?: string | null;
+  full_name: string;
+}
+
 // ─── Metered-WIWO Transaction ─────────────────────────────────────────────────
 
 export interface MeteredWiwoTransaction {
@@ -159,7 +170,20 @@ export interface MeteredWiwoTransaction {
 
   // Relations
   header?: LpgTransactionHeader;
-  customer?: { customer_name: string; store_name?: string | null };
+  // DEV-RULE: Hydrated customer metadata from vos_database.customer matched via customer_code
+  customer?: {
+    id?: number;
+    customer_code?: string;
+    customer_name: string;
+    store_name?: string | null;
+    store_signage?: string | null;
+  };
+  // DEV-RULE: Hydrated user references from vos_database.user matched via user_id
+  created_by_user?: ResolvedUserRef | null;
+  created_by_name?: string | null;
+  posted_by_user?: ResolvedUserRef | null;
+  modified_by_user?: ResolvedUserRef | null;
+  cancelled_by_user?: ResolvedUserRef | null;
   site?: {
     id?: number;
     site_name: string | null;
