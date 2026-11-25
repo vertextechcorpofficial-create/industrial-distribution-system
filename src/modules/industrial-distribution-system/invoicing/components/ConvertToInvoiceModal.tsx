@@ -20,7 +20,6 @@ import {
     Truck,
     PackageSearch,
     Boxes,
-    Lock,
     Eye,
     Plus,
     Trash2,
@@ -86,8 +85,6 @@ export const ConvertToInvoiceModal: React.FC<ConvertToInvoiceModalProps> = ({
     const [isValidating, setIsValidating] = useState(false);
     const [isTemplateEditorOpen, setIsTemplateEditorOpen] = useState(false);
     const [orTemplate, setOrTemplate] = useState<ORTemplate | undefined>(undefined);
-    const [isHoldConfirmOpen, setIsHoldConfirmOpen] = useState(false);
-    const [isHolding, setIsHolding] = useState(false);
     const [receiptTypes, setReceiptTypes] = useState<ReceiptType[]>([]);
     const [selectedTypeId, setSelectedTypeId] = useState<string>("");
     const [isPrintConfirmOpen, setIsPrintConfirmOpen] = useState(false);
@@ -525,27 +522,6 @@ export const ConvertToInvoiceModal: React.FC<ConvertToInvoiceModalProps> = ({
     };
 
 
-
-    const handleHoldOrder = async () => {
-        if (!order) return;
-        setIsHolding(true);
-        try {
-            await InvoicingService.updateSalesOrder(order.order_id, {
-                order_status: "On Hold",
-                on_hold_at: new Date().toISOString()
-            });
-
-            toast.warning("Order placed on hold successfully!");
-            onClose();
-            window.location.reload();
-        } catch (err) {
-            console.error(err);
-            toast.error(err instanceof Error ? err.message : "Error holding order");
-        } finally {
-            setIsHolding(false);
-            setIsHoldConfirmOpen(false);
-        }
-    };
 
     /**
      * handlePrint now acts as the INITIAL validation trigger.
@@ -1394,13 +1370,7 @@ export const ConvertToInvoiceModal: React.FC<ConvertToInvoiceModalProps> = ({
 
                 <DialogFooter className="p-6 bg-muted/30 border-t flex flex-col sm:flex-row justify-end gap-3 flex-shrink-0">
                     <div className="flex flex-wrap items-center gap-3 w-full sm:w-auto">
-                        <Button
-                            variant="outline"
-                            className="flex-1 sm:flex-none h-11 rounded-xl font-bold uppercase text-[10px] tracking-widest bg-amber-500/5 border-amber-500/20 text-amber-600 hover:bg-amber-500 hover:text-white transition-all duration-300"
-                            onClick={() => setIsHoldConfirmOpen(true)}
-                        >
-                            <Lock className="h-3.5 w-3.5 mr-2" /> Hold Order
-                        </Button>
+
                         <Button
                             variant="outline"
                             className="flex-1 sm:flex-none h-11 rounded-xl font-bold uppercase text-[10px] tracking-widest hover:bg-primary hover:text-white transition-all duration-300"
@@ -1864,40 +1834,6 @@ export const ConvertToInvoiceModal: React.FC<ConvertToInvoiceModalProps> = ({
                     }
                 }}
             />
-
-            {/* HOLD ORDER CONFIRMATION DIALOG */}
-            <Dialog open={isHoldConfirmOpen} onOpenChange={setIsHoldConfirmOpen}>
-                <DialogContent className="sm:max-w-[400px] rounded-2xl p-0 overflow-hidden border-none shadow-2xl">
-                    <DialogTitle className="sr-only">Confirm Hold Order</DialogTitle>
-                    <div className="bg-amber-500 p-6 flex flex-col items-center text-white">
-                        <div className="bg-white/20 p-4 rounded-full mb-4">
-                            <Lock size={32} className="text-white" />
-                        </div>
-                        <h3 className="text-xl font-black uppercase tracking-widest">Hold Order?</h3>
-                        <p className="text-amber-50 text-center text-xs mt-2 font-medium">Are you sure you want to place this order on hold? This will move it out of the invoicing list.</p>
-                    </div>
-                    <div className="p-6 bg-white flex flex-col gap-3">
-                        <Button 
-                            className="w-full h-12 rounded-xl font-black uppercase text-xs tracking-widest bg-amber-500 hover:bg-amber-600 shadow-lg shadow-amber-500/20 transition-all active:scale-95"
-                            onClick={handleHoldOrder}
-                            disabled={isHolding}
-                        >
-                            {isHolding ? (
-                                <div className="h-4 w-4 border-2 border-white border-t-transparent rounded-full animate-spin mr-2" />
-                            ) : null}
-                            Confirm Hold
-                        </Button>
-                        <Button 
-                            variant="ghost" 
-                            className="w-full h-12 rounded-xl font-black uppercase text-xs tracking-widest text-muted-foreground hover:bg-muted"
-                            onClick={() => setIsHoldConfirmOpen(false)}
-                            disabled={isHolding}
-                        >
-                            Cancel
-                        </Button>
-                    </div>
-                </DialogContent>
-            </Dialog>
 
             {/* Print Confirmation Dialog */}
             <Dialog open={isPrintConfirmOpen} onOpenChange={setIsPrintConfirmOpen}>
