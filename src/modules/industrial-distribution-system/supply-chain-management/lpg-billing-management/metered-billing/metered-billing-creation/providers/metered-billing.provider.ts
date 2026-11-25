@@ -7,11 +7,55 @@ import type {
   MeteredListParams,
   TransactionType,
   TransactionStatus,
+  ResolvedUserRef,
 } from "../types";
 
 const DIRECTUS_URL = getDirectusBase();
 
 // ─── Mapping helpers ──────────────────────────────────────────────────────────
+
+// DEV-RULE: Safely extract integer user_id whether Directus returns a scalar ID or an expanded relation object
+function extractUserId(val: unknown): number | null {
+  if (val === null || val === undefined || val === "") return null;
+  if (typeof val === "object") {
+    const obj = val as Record<string, unknown>;
+    const rawId = obj.user_id ?? obj.id;
+    const num = Number(rawId);
+    return Number.isInteger(num) && num > 0 ? num : null;
+  }
+  const num = Number(val);
+  return Number.isInteger(num) && num > 0 ? num : null;
+}
+
+// DEV-RULE: Clean customer text fields where vos_database.customer defaults unset strings to "0"
+function cleanCustomerField(val: unknown): string {
+  if (typeof val !== "string") return "";
+  const trimmed = val.trim();
+  return trimmed && trimmed !== "0" ? trimmed : "";
+}
+
+// DEV-RULE: Format full name from vos_database.user columns (user_fname, user_mname, user_lname, suffix_name)
+function formatUserFullName(user: {
+  user_id: number;
+  user_fname?: string | null;
+  user_mname?: string | null;
+  user_lname?: string | null;
+  suffix_name?: string | null;
+  user_email?: string | null;
+}): string {
+  const parts = [
+    user.user_fname,
+    user.user_mname,
+    user.user_lname,
+    user.suffix_name,
+  ]
+    .map((p) => (typeof p === "string" ? p.trim() : ""))
+    .filter(Boolean);
+
+  if (parts.length > 0) return parts.join(" ");
+  if (user.user_email && user.user_email.trim()) return user.user_email.trim();
+  return `User ID ${user.user_id}`;
+}
 
 function mapTxRecord(raw: Record<string, unknown>): MeteredWiwoTransaction {
   const siteObj =
@@ -57,7 +101,8 @@ function mapTxRecord(raw: Record<string, unknown>): MeteredWiwoTransaction {
     transaction_type:
       (raw["transaction_type"] as TransactionType) ?? "REGULAR_BILLING",
     transaction_date: String(raw["transaction_date"] ?? ""),
-    customer_code: String(raw["customer_code"] ?? ""),
+    // DEV-RULE: Fallback to siteObj.customer_code when transaction-level customer_code is blank
+    customer_code: String(raw["customer_code"] ?? siteObj?.["customer_code"] ?? ""),
     lpg_site_id: siteId,
     meter_reading_id: mrObj
       ? Number(mrObj["id"])
@@ -139,18 +184,19 @@ function mapTxRecord(raw: Record<string, unknown>): MeteredWiwoTransaction {
     billing_period_to: raw["billing_period_to"]
       ? String(raw["billing_period_to"])
       : null,
-    posted_by: raw["posted_by"] ? Number(raw["posted_by"]) : null,
+    // DEV-RULE: Extract audit user IDs safely to support hydration against vos_database.user
+    posted_by: extractUserId(raw["posted_by"]),
     posted_date: raw["posted_date"] ? String(raw["posted_date"]) : null,
-    cancelled_by: raw["cancelled_by"] ? Number(raw["cancelled_by"]) : null,
+    cancelled_by: extractUserId(raw["cancelled_by"]),
     cancelled_date: raw["cancelled_date"]
       ? String(raw["cancelled_date"])
       : null,
     cancelled_reason: raw["cancelled_reason"]
       ? String(raw["cancelled_reason"])
       : null,
-    created_by: raw["created_by"] ? Number(raw["created_by"]) : null,
+    created_by: extractUserId(raw["created_by"]),
     created_date: raw["created_date"] ? String(raw["created_date"]) : null,
-    modified_by: raw["modified_by"] ? Number(raw["modified_by"]) : null,
+    modified_by: extractUserId(raw["modified_by"]),
     modified_date: raw["modified_date"] ? String(raw["modified_date"]) : null,
     header: headerObj
       ? {
@@ -221,11 +267,162 @@ function mapTxRecord(raw: Record<string, unknown>): MeteredWiwoTransaction {
   };
 }
 
+// ─── Hydration helper (Customer & User resolution) ───────────────────────────
+
+/**
+ * DEV-RULE: Batch-hydrates customer details (vos_database.customer via customer_code)
+ * and audit user details (vos_database.user via user_id) onto mapped metered transactions.
+ * Failures in either lookup are logged and handled gracefully without breaking the response.
+ */
+async function hydrateMeteredTransactions(
+  txs: MeteredWiwoTransaction[],
+): Promise<MeteredWiwoTransaction[]> {
+  if (txs.length === 0) return txs;
+
+  const customerCodes = Array.from(
+    new Set(
+      txs
+        .map((t) => (typeof t.customer_code === "string" ? t.customer_code.trim() : ""))
+        .filter(Boolean),
+    ),
+  );
+
+  const userIds = Array.from(
+    new Set(
+      txs
+        .flatMap((t) => [
+          t.created_by,
+          t.posted_by,
+          t.modified_by,
+          t.cancelled_by,
+          t.meter_reading?.created_by,
+        ])
+        .filter((id): id is number => typeof id === "number" && Number.isInteger(id) && id > 0),
+    ),
+  );
+
+  type CustomerRecord = {
+    id: number;
+    customer_code: string;
+    customer_name: string;
+    store_name?: string | null;
+    store_signage?: string | null;
+  };
+
+  type RawUserRecord = {
+    user_id: number;
+    user_fname?: string | null;
+    user_mname?: string | null;
+    user_lname?: string | null;
+    suffix_name?: string | null;
+    user_email?: string | null;
+  };
+
+  const customerMap = new Map<string, CustomerRecord>();
+  const userMap = new Map<number, ResolvedUserRef>();
+
+  // DEV-RULE: Fetch customer and user lookup tables in parallel to minimize latency
+  await Promise.all([
+    customerCodes.length > 0
+      ? (async () => {
+          try {
+            const filterObj = { customer_code: { _in: customerCodes } };
+            const custRes = await directusFetch<{ data?: CustomerRecord[] }>(
+              `${DIRECTUS_URL}/items/customer?fields=id,customer_code,customer_name,store_name,store_signage&filter=${encodeURIComponent(JSON.stringify(filterObj))}&limit=-1`,
+            );
+            for (const c of custRes.data ?? []) {
+              if (!c.customer_code) continue;
+              const code = c.customer_code.trim();
+              customerMap.set(code, c);
+              customerMap.set(code.toUpperCase(), c);
+            }
+          } catch (err) {
+            console.warn(
+              "[hydrateMeteredTransactions] Failed to resolve customers from vos_database.customer:",
+              err,
+            );
+          }
+        })()
+      : Promise.resolve(),
+
+    userIds.length > 0
+      ? (async () => {
+          try {
+            const filterObj = { user_id: { _in: userIds } };
+            const userRes = await directusFetch<{ data?: RawUserRecord[] }>(
+              `${DIRECTUS_URL}/items/user?fields=user_id,user_fname,user_mname,user_lname,suffix_name,user_email&filter=${encodeURIComponent(JSON.stringify(filterObj))}&limit=-1`,
+            );
+            for (const u of userRes.data ?? []) {
+              const uid = Number(u.user_id);
+              if (!Number.isInteger(uid) || uid <= 0) continue;
+              userMap.set(uid, {
+                user_id: uid,
+                user_fname: u.user_fname ?? "",
+                user_mname: u.user_mname ?? null,
+                user_lname: u.user_lname ?? "",
+                suffix_name: u.suffix_name ?? null,
+                user_email: u.user_email ?? null,
+                full_name: formatUserFullName({ ...u, user_id: uid }),
+              });
+            }
+          } catch (err) {
+            console.warn(
+              "[hydrateMeteredTransactions] Failed to resolve users from vos_database.user:",
+              err,
+            );
+          }
+        })()
+      : Promise.resolve(),
+  ]);
+
+  return txs.map((tx) => {
+    const trimmedCode = tx.customer_code?.trim() ?? "";
+    const cust =
+      (trimmedCode ? customerMap.get(trimmedCode) ?? customerMap.get(trimmedCode.toUpperCase()) : undefined) ??
+      undefined;
+
+    const resolvedCustomerName = cust
+      ? cleanCustomerField(cust.customer_name) ||
+        cleanCustomerField(cust.store_name) ||
+        cleanCustomerField(cust.store_signage)
+      : "";
+    const resolvedStoreName = cust ? cleanCustomerField(cust.store_name) || null : null;
+    const resolvedStoreSignage = cust ? cleanCustomerField(cust.store_signage) || null : null;
+
+    // Fallback to meter_reading.created_by if bridge transaction created_by is null
+    const effectiveCreatedBy = tx.created_by ?? tx.meter_reading?.created_by ?? null;
+    const createdByUser = effectiveCreatedBy ? userMap.get(effectiveCreatedBy) ?? null : null;
+    const postedByUser = tx.posted_by ? userMap.get(tx.posted_by) ?? null : null;
+    const modifiedByUser = tx.modified_by ? userMap.get(tx.modified_by) ?? null : null;
+    const cancelledByUser = tx.cancelled_by ? userMap.get(tx.cancelled_by) ?? null : null;
+
+    return {
+      ...tx,
+      created_by: effectiveCreatedBy,
+      customer: cust
+        ? {
+            id: cust.id,
+            customer_code: cust.customer_code,
+            customer_name: resolvedCustomerName,
+            store_name: resolvedStoreName,
+            store_signage: resolvedStoreSignage,
+          }
+        : tx.customer,
+      created_by_user: createdByUser,
+      created_by_name: createdByUser?.full_name ?? null,
+      posted_by_user: postedByUser,
+      modified_by_user: modifiedByUser,
+      cancelled_by_user: cancelledByUser,
+    };
+  });
+}
+
 // ─── TX deep fields ───────────────────────────────────────────────────────────
 
 const TX_FIELDS = [
   "*",
   "lpg_site_id.id",
+  "lpg_site_id.customer_code",
   "lpg_site_id.site_name",
   "lpg_site_id.site_address",
   "lpg_site_id.billing_mode",
@@ -353,14 +550,36 @@ export async function fetchMeteredTransactions(
   });
 
   // 3. Search filter
+  // DEV-RULE: Also match customer_name/store_name from vos_database.customer when searching
   if (params.search) {
-    filterList.push({
-      _or: [
-        { customer_code: { _icontains: params.search } },
-        { transaction_no: { _icontains: params.search } },
-        { lpg_site_id: { site_name: { _icontains: params.search } } },
-      ],
-    });
+    const searchOr: Record<string, unknown>[] = [
+      { customer_code: { _icontains: params.search } },
+      { transaction_no: { _icontains: params.search } },
+      { lpg_site_id: { site_name: { _icontains: params.search } } },
+    ];
+
+    try {
+      const custSearchFilter = {
+        _or: [
+          { customer_name: { _icontains: params.search } },
+          { store_name: { _icontains: params.search } },
+          { customer_code: { _icontains: params.search } },
+        ],
+      };
+      const matchedCustomers = await directusFetch<{ data?: { customer_code: string }[] }>(
+        `${DIRECTUS_URL}/items/customer?fields=customer_code&filter=${encodeURIComponent(JSON.stringify(custSearchFilter))}&limit=100`,
+      );
+      const matchedCodes = (matchedCustomers.data ?? [])
+        .map((c) => c.customer_code?.trim())
+        .filter((c): c is string => Boolean(c));
+      if (matchedCodes.length > 0) {
+        searchOr.push({ customer_code: { _in: matchedCodes } });
+      }
+    } catch (err) {
+      console.warn("[fetchMeteredTransactions] Customer search lookup failed:", err);
+    }
+
+    filterList.push({ _or: searchOr });
   }
 
   // Combine into a single filter object
@@ -381,8 +600,12 @@ export async function fetchMeteredTransactions(
     meta?: { total_count: number };
   }>(`${DIRECTUS_URL}/items/lpg_metered_wiwo_transactions?${qs}`);
 
+  // DEV-RULE: Hydrate resolved customer and user metadata onto the transaction list
+  const mapped = (res.data ?? []).map(mapTxRecord);
+  const hydrated = await hydrateMeteredTransactions(mapped);
+
   return {
-    data: (res.data ?? []).map(mapTxRecord),
+    data: hydrated,
     total: res.meta?.total_count ?? 0,
   };
 }
@@ -399,7 +622,10 @@ export async function fetchLastMeteredTransaction(
   );
 
   const tx = res.data?.[0];
-  return tx ? mapTxRecord(tx) : null;
+  if (!tx) return null;
+  // DEV-RULE: Hydrate customer and user metadata on the last metered transaction
+  const [hydrated] = await hydrateMeteredTransactions([mapTxRecord(tx)]);
+  return hydrated ?? null;
 }
 
 /**
@@ -466,7 +692,9 @@ export async function fetchMeteredTransactionById(
     `${DIRECTUS_URL}/items/lpg_metered_wiwo_transactions/${id}?fields=${TX_FIELDS}`,
   );
   if (!res.data) return null;
-  const tx = mapTxRecord(res.data);
+  // DEV-RULE: Hydrate customer (vos_database.customer) and user (vos_database.user) on single transaction detail
+  const [tx] = await hydrateMeteredTransactions([mapTxRecord(res.data)]);
+  if (!tx) return null;
 
   try {
     const attsRes = await directusFetch<{ data: Record<string, unknown>[] }>(

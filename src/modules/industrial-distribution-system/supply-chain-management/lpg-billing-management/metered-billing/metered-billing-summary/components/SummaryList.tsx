@@ -231,7 +231,11 @@ export function SummaryList({ selectedId, onSelect }: Props) {
                     >
                       {txNo}
                     </div>
-                    <div className="text-[11px] text-zinc-900 dark:text-zinc-100 font-bold truncate">
+                    {/* DEV-RULE: Display hydrated customer name with hover title fallback */}
+                    <div
+                      className="text-[11px] text-zinc-900 dark:text-zinc-100 font-bold truncate"
+                      title={customer}
+                    >
                       {customer}
                     </div>
                     <div className="text-[11px] text-muted-foreground truncate">
