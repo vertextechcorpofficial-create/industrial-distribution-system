@@ -54,11 +54,13 @@ export function useStockTransferApproval() {
         const newAvailable: Record<number, number> = {};
         const newAllocated: Record<number, number> = {};
 
-        // Fetch branch aggregate inventory in a single call (eliminates client-side N+1 waterfalls)
+        // AG-COMMENT: Pass both branchId and snake_case branch_id to ensure Spring Boot filter resolves sub-branches / bad stock branches
         const group = base.selectedGroup!;
+        const branchIdStr = String(group.sourceBranch);
         const params = new URLSearchParams({
           branchName: sourceBranchName,
-          branchId: String(group.sourceBranch),
+          branchId: branchIdStr,
+          branch_id: branchIdStr,
           current: '0'
         });
 

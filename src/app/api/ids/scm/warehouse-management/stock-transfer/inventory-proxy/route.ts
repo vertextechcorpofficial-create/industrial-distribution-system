@@ -29,7 +29,8 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({ error: 'SPRING_API_BASE_URL is not configured' }, { status: 500 });
   }
 
-  // Build cache key from branch identifiers (excludes auth/token params)
+  // AG-COMMENT: Normalize branch identifier support (both snake_case branch_id and camelCase branchId)
+  // Ensures view-running-inventory resolves sub-branches / bad stock branches reliably
   const branchId = searchParams.get('branchId') || searchParams.get('branch_id') || '';
   const branchName = searchParams.get('branchName') || '';
   const cacheKey = `inv:${branchId}:${branchName}`;
@@ -49,8 +50,17 @@ export async function GET(request: NextRequest) {
     targetUrl.searchParams.set(key, value);
   });
 
-  // Extract auth token from cookies
-  const token = request.cookies.get('vos_access_token')?.value;
+  // Ensure both branch_id and branchId are populated on the target URL for Spring Boot filter compatibility
+  if (branchId) {
+    targetUrl.searchParams.set('branch_id', branchId);
+    targetUrl.searchParams.set('branchId', branchId);
+  }
+
+  // Extract auth token from cookies or server environment fallback
+  const token = request.cookies.get('vos_access_token')?.value ||
+    request.cookies.get('springboot_token')?.value ||
+    process.env.VOS_ACCESS_TOKEN ||
+    process.env.vos_access_token;
   console.log(`[Proxy] Cache MISS — fetching: ${targetUrl.toString()}`);
   console.log(`[Proxy] Token present: ${!!token}, Length: ${token?.length}`);
 
@@ -71,20 +81,47 @@ export async function GET(request: NextRequest) {
   }
 
   try {
+    const fetchHeaders: Record<string, string> = {
+      'Accept': 'application/json',
+      ...(token ? {
+        'Authorization': `Bearer ${token}`,
+        'Cookie': `vos_access_token=${token}`
+      } : {}),
+    };
+
     const response = await fetch(targetUrl.toString(), {
       method: 'GET',
-      headers: {
-        'Accept': 'application/json',
-        ...(token ? {
-          'Authorization': `Bearer ${token}`,
-          'Cookie': `vos_access_token=${token}`
-        } : {}),
-      },
+      headers: fetchHeaders,
       cache: 'no-store',
     });
 
+    // AG-COMMENT: If name-based filter returned empty or 404, retry filtering strictly by numeric branch_id
+    // This handles sub-branches (e.g. "Alaminos - Bad Stock") where string name comparison fails in Spring Boot
     if (response.ok) {
-      const data = await response.json();
+      let data = await response.json();
+      const list = Array.isArray(data) ? data : (data.data || []);
+
+      if (list.length === 0 && branchId && branchName) {
+        const fallbackUrl = new URL(`${springBase}/api/view-running-inventory/filter`);
+        fallbackUrl.searchParams.set('branch_id', branchId);
+        fallbackUrl.searchParams.set('branchId', branchId);
+
+        console.log(`[Proxy] Name filter yielded 0 items, retrying with branch_id alone: ${fallbackUrl.toString()}`);
+        const retryRes = await fetch(fallbackUrl.toString(), {
+          method: 'GET',
+          headers: fetchHeaders,
+          cache: 'no-store',
+        });
+
+        if (retryRes.ok) {
+          const retryData = await retryRes.json();
+          const retryList = Array.isArray(retryData) ? retryData : (retryData.data || []);
+          if (retryList.length > 0) {
+            data = retryData;
+          }
+        }
+      }
+
       // Cache successful response for 30s to prevent N+1 DB view queries
       setCached(cacheKey, data);
       return NextResponse.json(data);
