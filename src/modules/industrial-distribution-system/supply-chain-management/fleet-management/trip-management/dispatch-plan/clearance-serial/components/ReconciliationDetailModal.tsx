@@ -126,11 +126,15 @@ const ReconciliationDetailModal: React.FC<ReconciliationDetailModalProps> = ({
                         const withCustomerSerials = lineSerials.filter(s => s.cylinder_status === 'WITH_CUSTOMER').map(s => s.serial);
 
                         // Scanned Qty (WITH_CUSTOMER)
+                        // AG-COMMENT: If status is Unfulfilled and not previously scanned, default to 0 delivered
                         if (reconciliation.scannedQtys && reconciliation.scannedQtys[line.id] !== undefined) {
                             calculatedScanned[line.id] = reconciliation.scannedQtys[line.id];
                             calculatedSerials[line.id] = reconciliation.scannedSerials?.[line.id] || [];
                         } else {
-                            if (line.is_serialized === 1) {
+                            if (reconciliation.status === 'Unfulfilled') {
+                                calculatedScanned[line.id] = 0;
+                                calculatedSerials[line.id] = [];
+                            } else if (line.is_serialized === 1) {
                                 calculatedScanned[line.id] = Math.min(line.qty, withCustomerSerials.length);
                                 calculatedSerials[line.id] = withCustomerSerials.slice(0, line.qty);
                             } else {
@@ -556,12 +560,22 @@ const ReconciliationDetailModal: React.FC<ReconciliationDetailModalProps> = ({
                         onClose={() => setIsCylinderModalOpen(false)}
                         allowedProductNames={detail ? detail.lines.map(l => l.product_name) : []}
                         invoiceId={reconciliation.id}
+                        initialSerials={Object.values(scannedSerials).flat()}
                         onConfirm={(serials, productName) => {
                             const line = detail?.lines.find(l => l.product_name === productName);
                             if (line) {
+                                const newDelivered = (scannedQtys[line.id] || 0) + serials.length;
                                 setScannedQtys(prev => ({
                                     ...prev,
-                                    [line.id]: (prev[line.id] || 0) + serials.length
+                                    [line.id]: newDelivered
+                                }));
+                                setScannedSerials(prev => ({
+                                    ...prev,
+                                    [line.id]: Array.from(new Set([...(prev[line.id] || []), ...serials]))
+                                }));
+                                setMissingQtys(prev => ({
+                                    ...prev,
+                                    [line.id]: Math.max(0, line.qty - newDelivered - (scannedMissingQtys[line.id] || 0))
                                 }));
                             }
                         }}
@@ -649,10 +663,53 @@ const ReconciliationDetailModal: React.FC<ReconciliationDetailModalProps> = ({
                                             <TableCell className="text-sm font-bold text-foreground text-center tabular-nums">{line.qty}</TableCell>
                                             {reconciliation.status !== 'Fulfilled' ? (
                                                 <>
-                                                    <TableCell className="text-center w-24">
-                                                        <div className="h-9 w-16 flex items-center justify-center font-bold rounded-lg border bg-muted/50 border-border tabular-nums">
-                                                            {isConcernedRowActive ? delivered : "-"}
-                                                        </div>
+                                                    <TableCell className="text-center w-28">
+                                                        {/* AG-COMMENT: If is_serialized !== 0, it is a serialized product -> delivered qty is strictly serial-driven (no +/-). If is_serialized === 0, it is non-serialized -> provide +/- controls. */}
+                                                        {isConcernedRowActive ? (
+                                                            Number(line.is_serialized) === 0 ? (
+                                                                <div className="flex items-center justify-center gap-1.5">
+                                                                    <Button
+                                                                        type="button"
+                                                                        variant="outline"
+                                                                        size="icon"
+                                                                        className="h-7 w-7 rounded-lg border-border hover:bg-muted p-0 shrink-0 font-bold"
+                                                                        onClick={() => {
+                                                                            const nextVal = Math.max(0, delivered - 1);
+                                                                            setScannedQtys(prev => ({ ...prev, [line.id]: nextVal }));
+                                                                            setMissingQtys(prev => ({ ...prev, [line.id]: Math.max(0, line.qty - nextVal - withConcerned) }));
+                                                                        }}
+                                                                        disabled={delivered <= 0}
+                                                                    >
+                                                                        -
+                                                                    </Button>
+                                                                    <div className="h-9 w-12 flex items-center justify-center font-bold rounded-lg border bg-muted/50 border-border tabular-nums text-sm">
+                                                                        {delivered}
+                                                                    </div>
+                                                                    <Button
+                                                                        type="button"
+                                                                        variant="outline"
+                                                                        size="icon"
+                                                                        className="h-7 w-7 rounded-lg border-border hover:bg-muted p-0 shrink-0 font-bold"
+                                                                        onClick={() => {
+                                                                            const nextVal = Math.min(line.qty - withConcerned, delivered + 1);
+                                                                            setScannedQtys(prev => ({ ...prev, [line.id]: nextVal }));
+                                                                            setMissingQtys(prev => ({ ...prev, [line.id]: Math.max(0, line.qty - nextVal - withConcerned) }));
+                                                                        }}
+                                                                        disabled={delivered >= line.qty - withConcerned}
+                                                                    >
+                                                                        +
+                                                                    </Button>
+                                                                </div>
+                                                            ) : (
+                                                                <div className="h-9 w-16 mx-auto flex items-center justify-center font-bold rounded-lg border bg-muted/50 border-border tabular-nums text-sm">
+                                                                    {delivered}
+                                                                </div>
+                                                            )
+                                                        ) : (
+                                                            <div className="h-9 w-16 mx-auto flex items-center justify-center font-bold rounded-lg border bg-muted/50 border-border tabular-nums">
+                                                                -
+                                                            </div>
+                                                        )}
                                                     </TableCell>
                                                     <TableCell className="text-center w-24">
                                                         <div className="h-9 w-16 flex items-center justify-center font-bold rounded-lg border bg-amber-500/10 text-amber-600 dark:text-amber-400 border-amber-500/20 tabular-nums">
@@ -774,6 +831,7 @@ const ReconciliationDetailModal: React.FC<ReconciliationDetailModalProps> = ({
                     onClose={() => setIsCylinderModalOpen(false)}
                     allowedProductNames={detail ? detail.lines.map(l => l.product_name) : []}
                     invoiceId={reconciliation.id}
+                    initialSerials={Object.values(scannedSerials).flat()}
                     onConfirm={(serials, productName) => {
                         // AG-COMMENT: Match line item by exact product name OR size category key (e.g. 11 KG) to support brand swaps on empty cylinder returns
                         const line = detail?.lines.find(l => {
@@ -783,9 +841,18 @@ const ReconciliationDetailModal: React.FC<ReconciliationDetailModalProps> = ({
                             return lineKey && tagKey && lineKey === tagKey;
                         });
                         if (line) {
+                            const newDelivered = (scannedQtys[line.id] || 0) + serials.length;
                             setScannedQtys(prev => ({
                                 ...prev,
-                                [line.id]: (prev[line.id] || 0) + serials.length
+                                [line.id]: newDelivered
+                            }));
+                            setScannedSerials(prev => ({
+                                ...prev,
+                                [line.id]: Array.from(new Set([...(prev[line.id] || []), ...serials]))
+                            }));
+                            setMissingQtys(prev => ({
+                                ...prev,
+                                [line.id]: Math.max(0, line.qty - newDelivered - (scannedMissingQtys[line.id] || 0))
                             }));
                         }
                     }}

@@ -106,12 +106,20 @@ export function ProductSearchSelect({
                     <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
                 </Button>
             </PopoverTrigger>
-            <PopoverContent className="w-[--radix-popover-trigger-width] p-0" align="start">
-                <Command>
+            {/* AG-COMMENT: Fixed scrolling inside modal dialog by preventing scroll event interception and enforcing local scroll containment */}
+            <PopoverContent 
+                className="w-[--radix-popover-trigger-width] p-0 z-[100]" 
+                align="start"
+                onWheel={(e) => e.stopPropagation()}
+            >
+                <Command className="overflow-visible">
                     <CommandInput placeholder="Search product..." className="text-xs h-9" />
-                    <CommandList className="max-h-[220px]">
+                    <CommandList 
+                        className="max-h-[200px] overflow-y-auto overscroll-contain custom-scrollbar touch-pan-y"
+                        onWheel={(e) => e.stopPropagation()}
+                    >
                         <CommandEmpty className="text-xs p-3 text-muted-foreground">No products found.</CommandEmpty>
-                        <CommandGroup>
+                        <CommandGroup className="p-1">
                             {options.map((opt) => {
                                 const key = String(opt.product_id);
                                 const brandName = resolveBrandName(opt);

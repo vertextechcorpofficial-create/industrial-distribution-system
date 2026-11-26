@@ -166,12 +166,9 @@ const ScanningModal: React.FC<ScanningModalProps> = ({
             }
 
             // 3b. Check if cylinder is already WITH_CUSTOMER (Delivered)
+            // AG-COMMENT: Allow scanning cylinders if they are being accounted for on return / missing verification
             if (mapping.cylinder_status === 'WITH_CUSTOMER') {
-                console.log(`[Serial Scan REJECTED] Serial "${tag}" is already marked as WITH_CUSTOMER (Delivered) on this dispatch. Only AVAILABLE missing cylinders can be scanned here.`, { mapping });
-                console.groupEnd();
-                toast.warning(`Serial ${tag} was already delivered to customer (WITH_CUSTOMER).`);
-                playSound('error');
-                continue;
+                console.log(`[Serial Scan INFO] Serial "${tag}" was marked as WITH_CUSTOMER on this dispatch. Accepting as returned/accounted for invoice reconciliation.`, { mapping });
             }
 
             // 4. Line item matching check
@@ -257,9 +254,10 @@ const ScanningModal: React.FC<ScanningModalProps> = ({
         }
 
         // Check if all items are scanned after the entire batch of tags is processed
+        // AG-COMMENT: Guard totalRequired > 0 so empty/zero manifests do not falsely trigger "Manifest completed!"
         const totalRequired = items.reduce((acc, i) => acc + i.qty, 0);
         const totalScannedNow = Object.values(scannedQtysRef.current).reduce((acc, q) => acc + q, 0);
-        if (totalScannedNow >= totalRequired && isScanning) {
+        if (totalRequired > 0 && totalScannedNow >= totalRequired && isScanning) {
             setIsScanning(false);
             toast.success("Manifest completed!");
         }

@@ -27,6 +27,7 @@ interface CylinderTaggingModalProps {
     onConfirm?: (serials: string[], productName?: string) => void;
     allowedProductNames?: string[];
     invoiceId?: number;
+    initialSerials?: string[];
 }
 
 // AG-COMMENT: Helper to extract size category (e.g. "11 KG", "50 KG", "2.7 KG") from product names
@@ -44,10 +45,11 @@ const CylinderTaggingModal: React.FC<CylinderTaggingModalProps> = ({
     onClose,
     onConfirm,
     allowedProductNames,
-    invoiceId
+    invoiceId,
+    initialSerials = []
 }) => {
     // serials = existing/registered serials
-    const [serials, setSerials] = useState<string[]>([]);
+    const [serials, setSerials] = useState<string[]>(initialSerials);
     // unregisteredSerials = serials not found in cylinder_assets table
     const [unregisteredSerials, setUnregisteredSerials] = useState<string[]>([]);
     // Track condition of each added serial
@@ -103,7 +105,7 @@ const CylinderTaggingModal: React.FC<CylinderTaggingModalProps> = ({
     // Reset state when modal opens
     useEffect(() => {
         if (isOpen) {
-            setSerials([]);
+            setSerials(initialSerials || []);
             setUnregisteredSerials([]);
             setSerialConditions({});
             setInputValue('');
@@ -113,7 +115,7 @@ const CylinderTaggingModal: React.FC<CylinderTaggingModalProps> = ({
                 inputRef.current?.focus();
             }, 150);
         }
-    }, [isOpen]);
+    }, [isOpen, initialSerials]);
 
     const handleAddSerial = async () => {
         const trimmed = inputValue.trim().toUpperCase();
@@ -131,8 +133,9 @@ const CylinderTaggingModal: React.FC<CylinderTaggingModalProps> = ({
             const product = products.find(p => String(p.product_id) === selectedProductId);
             const isProductEmpty = product?.uom_ids === 'EMPTY';
 
+            // AG-COMMENT: Pass invoice_id to check if serial was already tagged in this invoice session
             const response = await fetch(
-                `/api/ids/scm/fleet-management/trip-management/dispatch-plan/clearance-serial/cylinder-assets?serial_number=${encodeURIComponent(trimmed)}&is_empty=${isProductEmpty}`
+                `/api/ids/scm/fleet-management/trip-management/dispatch-plan/clearance-serial/cylinder-assets?serial_number=${encodeURIComponent(trimmed)}&is_empty=${isProductEmpty}${invoiceId ? `&invoice_id=${invoiceId}` : ''}`
             );
             if (!response.ok) {
                 throw new Error('API failure');

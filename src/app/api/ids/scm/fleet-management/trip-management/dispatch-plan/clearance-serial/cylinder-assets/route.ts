@@ -52,6 +52,7 @@ async function poster(endpoint: string, data: unknown) {
 export async function GET(request: Request) {
     const { searchParams } = new URL(request.url);
     const serialNumber = searchParams.get('serial_number');
+    const invoiceIdParam = searchParams.get('invoice_id');
 
     if (!serialNumber) {
         return NextResponse.json({ error: 'serial_number is required' }, { status: 400 });
@@ -62,6 +63,19 @@ export async function GET(request: Request) {
         const encodedSerial = encodeURIComponent(serialNumber.trim());
         const response = await fetcher(`/cylinder_assets?filter[serial_number][_eq]=${encodedSerial}&fields=id,serial_number,product_id,product_id.uom_ids,cylinder_condition`);
         const data = response.data || [];
+
+        // AG-COMMENT: Check if the serial was already tagged in the current post_dispatch_invoice session
+        let isTaggedInCurrentInvoice = false;
+        if (invoiceIdParam) {
+            try {
+                const taggedRes = await fetcher(`/post_dispatch_invoices_serial?filter[post_dispatch_invoice_id][_eq]=${Number(invoiceIdParam)}&filter[serial_number][_eq]=${encodedSerial}&limit=1`);
+                if (taggedRes.data && taggedRes.data.length > 0) {
+                    isTaggedInCurrentInvoice = true;
+                }
+            } catch (tagErr) {
+                console.warn('Error checking existing tagged invoice serial:', tagErr);
+            }
+        }
 
         // Check if the serial is currently on hand in inventory using the Spring Boot API
         const SPRING_API_BASE_URL = process.env.SPRING_API_BASE_URL;
@@ -106,8 +120,9 @@ export async function GET(request: Request) {
             });
         }
 
-        // 2. If it is NOT on hand, but exists as an EMPTY Cylinder Asset, block it
-        if (isCurrentAssetEmpty) {
+        // 2. If it is NOT on hand, but exists as an EMPTY Cylinder Asset, block it UNLESS tagged in this current invoice
+        // AG-COMMENT: Allow re-scanning/re-opening if the cylinder was tagged during the current invoice session
+        if (isCurrentAssetEmpty && !isTaggedInCurrentInvoice) {
             return NextResponse.json({
                 exists: existsInCylinderAssets,
                 asset: data[0] || null,
