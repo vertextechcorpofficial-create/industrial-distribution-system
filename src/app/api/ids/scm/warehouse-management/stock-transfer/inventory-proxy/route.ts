@@ -57,9 +57,9 @@ export async function GET(request: NextRequest) {
   }
 
   // Extract auth token from cookies or server environment fallback
-  const token = request.cookies.get('vos_access_token')?.value || 
-    request.cookies.get('springboot_token')?.value || 
-    process.env.VOS_ACCESS_TOKEN || 
+  const token = request.cookies.get('vos_access_token')?.value ||
+    request.cookies.get('springboot_token')?.value ||
+    process.env.VOS_ACCESS_TOKEN ||
     process.env.vos_access_token;
   console.log(`[Proxy] Cache MISS — fetching: ${targetUrl.toString()}`);
   console.log(`[Proxy] Token present: ${!!token}, Length: ${token?.length}`);
@@ -89,7 +89,7 @@ export async function GET(request: NextRequest) {
       } : {}),
     };
 
-    let response = await fetch(targetUrl.toString(), {
+    const response = await fetch(targetUrl.toString(), {
       method: 'GET',
       headers: fetchHeaders,
       cache: 'no-store',
@@ -100,19 +100,19 @@ export async function GET(request: NextRequest) {
     if (response.ok) {
       let data = await response.json();
       const list = Array.isArray(data) ? data : (data.data || []);
-      
+
       if (list.length === 0 && branchId && branchName) {
         const fallbackUrl = new URL(`${springBase}/api/view-running-inventory/filter`);
         fallbackUrl.searchParams.set('branch_id', branchId);
         fallbackUrl.searchParams.set('branchId', branchId);
-        
+
         console.log(`[Proxy] Name filter yielded 0 items, retrying with branch_id alone: ${fallbackUrl.toString()}`);
         const retryRes = await fetch(fallbackUrl.toString(), {
           method: 'GET',
           headers: fetchHeaders,
           cache: 'no-store',
         });
-        
+
         if (retryRes.ok) {
           const retryData = await retryRes.json();
           const retryList = Array.isArray(retryData) ? retryData : (retryData.data || []);
