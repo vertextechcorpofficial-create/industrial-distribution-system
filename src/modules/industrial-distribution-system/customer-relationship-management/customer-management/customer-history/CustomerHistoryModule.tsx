@@ -10,7 +10,7 @@
 import * as React from "react";
 import { AnimatePresence, MotionConfig, motion } from "framer-motion";
 import { useReactToPrint } from "react-to-print";
-import { BarChart3, History, Printer, Users } from "lucide-react";
+import { BarChart3, Printer, Users } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import {
@@ -88,9 +88,6 @@ function CustomerHistoryShell() {
       <div className="flex flex-wrap items-start justify-between gap-4">
         <div className="min-w-0">
           <h1 className="flex items-center gap-2.5 text-xl font-bold tracking-tight text-blue-950 dark:text-blue-100 sm:text-2xl">
-            <span className="flex h-9 w-9 items-center justify-center rounded-lg bg-blue-600 text-white shadow-sm">
-              <History className="h-5 w-5 shrink-0" />
-            </span>
             Customer History
           </h1>
           <p className="mt-1 text-xs text-muted-foreground sm:text-sm">

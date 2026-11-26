@@ -102,8 +102,8 @@ export const PrintSheet = React.forwardRef<HTMLDivElement, PrintSheetProps>(
         {config.showFiltersSummary && (
           <section className="mb-3 rounded border border-slate-200 bg-slate-50 px-3 py-2 text-[10px] text-slate-700">
             <strong>Applied Filters:</strong> {filters.startDate} to {filters.endDate} · Branch:{" "}
-            {filters.branchId === "all" ? "All Industrial" : filters.branchId} · Product:{" "}
-            {filters.productId === "all" ? "All Parent Serialized" : filters.productId} · Active Customers Only
+            {filters.branchId === "all" ? "All Branches" : filters.branchId} · Product:{" "}
+            {filters.productId === "all" ? "All Products" : filters.productId}
           </section>
         )}
 
